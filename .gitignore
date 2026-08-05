@@ -7,3 +7,8 @@ node_modules/
 .DS_Store
 edge/queue/
 server/audio_store/
+
+# 수집한 기침 음성 데이터 — 개인 식별 정보이므로 절대 커밋 금지
+cough_data/
+*.wav
+!edge/test_cough.wav

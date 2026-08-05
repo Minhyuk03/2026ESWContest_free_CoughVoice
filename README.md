@@ -38,8 +38,33 @@ cough-id/
 │       ├── db.py
 │       └── main.py
 ├── dashboard/             # React + Vite 웹 대시보드
+├── tools/                 # 개발·수집 보조 스크립트 (라즈베리파이에서 실행)
+│   ├── i2s_mic_check.py   #   I2S 마이크 배선 진단
+│   └── collect_cough.py   #   기침 샘플 수집 + 자동 라벨링
 └── docs/                  # 설계 문서 (UML, 스토리보드 등)
 ```
+
+### 하드웨어 (2026-08-05 검증 완료)
+
+I2S MEMS 마이크(MS3625) 1개를 라즈베리파이 5에 연결해 실제 오디오 캡처를 검증했다.
+배선표·오버레이 설정·캡처 파라미터는 [`docs/hardware_i2s_mic.md`](docs/hardware_i2s_mic.md) 참조.
+
+핵심 값만 요약하면:
+
+| 항목 | 값 |
+|---|---|
+| ALSA 장치 | `hw:2` (card 0 아님) |
+| 포맷 | `S32_LE` / 2ch / 48000 Hz |
+| 유효 채널 | LEFT만 (RIGHT는 항상 0) |
+| 비트 정렬 | 24bit가 32bit 슬롯에 left-justified → **`>> 8` 시프트 필수** |
+
+### 데이터 수집
+
+기침 샘플 수집 프로토콜(거리·횟수·라벨링 규칙·품질 기준)은 [`docs/data_collection_protocol.md`](docs/data_collection_protocol.md) 참조.
+
+> **등록용과 검증용은 반드시 다른 날에 녹음할 것.** 한 세션에서 몰아 찍고 그 안에서 학습/검증을 나누면 모델이 화자의 목소리가 아니라 그날의 녹음 환경을 외운다. 측정 정확도가 부풀려지고 데모에서 무너진다.
+
+수집된 음성(`cough_data/`, `*.wav`)은 개인 식별 정보이므로 `.gitignore`로 커밋을 차단해 두었다.
 
 ## 3. 개발 과정 (P1~P8)
 
