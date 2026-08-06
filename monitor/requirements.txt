@@ -1,0 +1,6 @@
+numpy>=1.21
+fastapi>=0.95
+uvicorn>=0.20
+websockets>=10
+# Mac/USB 마이크용 (RPi에서 arecord만 쓸 거면 생략 가능)
+sounddevice>=0.4.5

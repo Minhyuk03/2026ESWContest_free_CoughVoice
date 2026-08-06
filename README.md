@@ -15,6 +15,7 @@
 | 엣지 (`edge/`) | 오디오 상시 캡처 → 기침 검출(에너지+CNN) → 2~3초 절단 → 서버 전송(실패 시 재시도 큐) | Python, sounddevice, tflite |
 | 서버 (`server/`) | 이벤트 수신 → log-mel 특징 추출 → ECAPA-TDNN 임베딩 → 코사인 매칭 → 알림 규칙 평가 → WebSocket 푸시 | FastAPI, SQLAlchemy, SpeechBrain |
 | 대시보드 (`dashboard/`) | 실시간 피드, 이력 조회, 화자 등록, 알림 규칙 설정 (7개 화면) | React + Vite, Recharts |
+| 모니터 (`monitor/`) | 마이크 입력을 실시간 분석해 **기침/대화/기타**를 화면에서 즉시 확인 — 검출 임계값 튜닝·시연용 독립 도구 | Python, FastAPI, WebSocket |
 
 - 성능 목표: 기침 발생 → 대시보드 표시 **≤ 3초** (NFR-03)
 - 프라이버시: 실명 대신 alias, 임베딩만 저장·원본 음성 비보존 (NFR-06)
@@ -38,6 +39,11 @@ cough-id/
 │       ├── db.py
 │       └── main.py
 ├── dashboard/             # React + Vite 웹 대시보드
+├── monitor/               # 실시간 소리 모니터 (기침/대화 판별 튜닝·데모용 독립 도구)
+│   ├── audio_source.py    #   sounddevice / arecord I2S / 시뮬레이션 입력
+│   ├── classifier.py      #   규칙 기반 기침·대화 판별
+│   ├── server.py          #   FastAPI + WebSocket
+│   └── static/index.html  #   단일 파일 대시보드 UI
 ├── tools/                 # 개발·수집 보조 스크립트 (라즈베리파이에서 실행)
 │   ├── i2s_mic_check.py   #   I2S 마이크 배선 진단
 │   └── collect_cough.py   #   기침 샘플 수집 + 자동 라벨링
