@@ -19,6 +19,21 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False)
 
 def init_db() -> None:
     Base.metadata.create_all(engine)
+    _migrate()
+
+
+def _migrate() -> None:
+    """create_all은 기존 테이블에 새 컬럼을 추가하지 않으므로 SQLite 한정 보정."""
+    if not DATABASE_URL.startswith("sqlite"):
+        return
+    from sqlalchemy import text
+
+    with engine.begin() as conn:
+        cols = {row[1] for row in conn.execute(text("PRAGMA table_info(persons)"))}
+        if "room" not in cols:
+            conn.execute(text("ALTER TABLE persons ADD COLUMN room VARCHAR(20)"))
+        if "sample_count" not in cols:
+            conn.execute(text("ALTER TABLE persons ADD COLUMN sample_count INTEGER DEFAULT 0"))
 
 
 def get_db():

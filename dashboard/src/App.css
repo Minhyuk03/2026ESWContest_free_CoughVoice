@@ -1,67 +1,677 @@
-#app {
-  max-width: 720px;
-  margin: 0 auto;
-  padding: 24px 16px;
-  font-family: system-ui, sans-serif;
+/* ---------- 공통 레이아웃 (사이드바 + 콘텐츠) ---------- */
+.shell {
+  display: flex;
+  min-height: 100svh;
 }
 
-header h1 {
-  font-size: 20px;
-  margin-bottom: 12px;
+.sidebar {
+  width: 220px;
+  flex-shrink: 0;
+  background: var(--sidebar);
+  color: #fff;
+  display: flex;
+  flex-direction: column;
+  padding: 24px 12px;
+  position: sticky;
+  top: 0;
+  height: 100svh;
 }
 
-.server-row {
+.brand {
+  font-size: 16px;
+  font-weight: 700;
+  padding: 0 12px 24px;
+}
+
+.sidebar nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.nav-item {
+  display: block;
+  padding: 10px 16px;
+  border-radius: 8px;
+  color: var(--sidebar-text);
+  text-decoration: none;
+  font-size: 14px;
+}
+
+.nav-item.active {
+  background: var(--sidebar-active);
+  color: #fff;
+  font-weight: 500;
+}
+
+.sidebar-foot {
+  margin-top: auto;
+  padding: 0 12px;
+  font-size: 12px;
+  color: var(--sidebar-text);
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.linklike {
+  background: none;
+  padding: 0;
+  color: inherit;
+  text-decoration: underline;
+  font-size: inherit;
+}
+
+.content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.topbar {
+  background: var(--card);
+  height: 64px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
+  justify-content: space-between;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+  z-index: 5;
 }
 
-.server-row input {
-  flex: 1;
-  padding: 6px 10px;
-  font-size: 14px;
-  border: 1px solid #ccc;
-  border-radius: 6px;
+.topbar h2 {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.device-chip {
+  background: var(--chip);
+  border-radius: 16px;
+  padding: 7px 16px;
+  font-size: 12px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .dot {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
-  flex-shrink: 0;
-  background: #999;
+  display: inline-block;
 }
-.dot.ok { background: #2ecc71; }
-.dot.down { background: #e74c3c; }
-.dot.checking { background: #f1c40f; }
+.dot.on { background: var(--ok); }
+.dot.off { background: var(--danger); }
 
-.error {
-  color: #e74c3c;
+.page {
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.card {
+  background: var(--card);
+  border-radius: 10px;
+  padding: 20px;
+  box-shadow: 0 1px 2px rgba(38, 41, 51, 0.04);
+}
+
+.card h3 {
+  font-size: 15px;
+  font-weight: 700;
+  margin-bottom: 14px;
+}
+
+.muted { color: var(--muted); }
+.small { font-size: 12px; }
+.spacer { flex: 1; }
+
+.form-error {
+  color: var(--danger);
   font-size: 13px;
-  margin-bottom: 8px;
 }
 
-.empty {
-  color: #888;
-  margin-top: 24px;
+/* ---------- S0 로그인 ---------- */
+.login-wrap {
+  min-height: 100svh;
+  display: grid;
+  place-items: center;
+}
+
+.login-card {
+  background: var(--card);
+  border-radius: 14px;
+  padding: 40px;
+  width: 400px;
+  max-width: calc(100vw - 32px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
   text-align: center;
+  box-shadow: 0 8px 30px rgba(38, 41, 51, 0.08);
 }
 
-table {
+.login-logo {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  background: var(--chip);
+  display: grid;
+  place-items: center;
+  font-size: 34px;
+  margin: 0 auto 4px;
+}
+
+.login-card h1 { font-size: 18px; }
+.login-card input { padding: 12px 14px; }
+.login-card button { padding: 12px; font-size: 14px; }
+
+.login-hint {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* ---------- S1 대시보드 ---------- */
+.alert-banner {
+  background: var(--danger-bg);
+  color: var(--danger);
+  border-radius: 8px;
+  padding: 14px 20px;
+  font-weight: 700;
+  font-size: 14px;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.alert-banner a { color: var(--danger); }
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+}
+
+.stat p:first-child { font-size: 13px; }
+
+.stat-num {
+  font-size: 26px;
+  font-weight: 700;
+  margin-top: 8px;
+}
+
+.dash-cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 376px;
+  gap: 20px;
+  align-items: start;
+}
+
+@media (max-width: 1100px) {
+  .dash-cols { grid-template-columns: 1fr; }
+}
+
+.dash-main {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+}
+
+.hour-chart {
+  height: 220px;
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  padding-top: 10px;
+}
+
+.hour-bar {
+  flex: 1;
+  min-height: 2px;
+  background: var(--bar);
+  border-radius: 3px;
+}
+
+.hour-axis {
+  display: flex;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 11px;
+  margin-top: 8px;
+}
+
+.person-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.person-row {
+  display: grid;
+  grid-template-columns: 120px 1fr 48px;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.person-bar-track { min-width: 0; }
+
+.person-bar {
+  height: 10px;
+  border-radius: 5px;
+  background: var(--bar);
+  min-width: 2px;
+}
+
+.person-count {
+  text-align: right;
+  font-weight: 500;
+}
+
+.feed {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 640px;
+  overflow-y: auto;
+}
+
+.feed-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+.feed-head h3 { margin-bottom: 0; }
+
+.feed-item {
+  background: var(--chip);
+  border-radius: 8px;
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: left;
+  width: 100%;
+}
+
+.feed-title {
+  font-size: 14px;
+  font-weight: 500;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.badge-unreg {
+  background: var(--danger-bg);
+  color: var(--danger);
+  font-style: normal;
+  font-size: 11px;
+  border-radius: 11px;
+  padding: 3px 12px;
+}
+
+/* ---------- S2 이력 ---------- */
+.filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 20px;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.trend-chart {
+  width: 100%;
+  height: 180px;
+  display: block;
+}
+
+.table-card { padding: 0; overflow-x: auto; }
+
+.data-table {
   width: 100%;
   border-collapse: collapse;
-  margin-top: 16px;
+  font-size: 13px;
+}
+
+.data-table th {
+  text-align: left;
+  padding: 14px 20px;
+  background: var(--chip);
+  color: var(--muted);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.data-table td {
+  padding: 12px 20px;
+  border-top: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.data-table tbody tr { cursor: pointer; }
+.data-table tbody tr:hover { background: var(--bg); }
+
+.tag-reg, .tag-unreg {
+  border-radius: 6px;
+  padding: 4px 12px;
+  font-size: 12px;
+}
+.tag-reg { background: var(--chip); }
+.tag-unreg { background: var(--danger-bg); color: var(--danger); }
+
+/* ---------- S3 화자 관리 ---------- */
+.page-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.speaker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+}
+
+.speaker-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.speaker-top {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+}
+
+.speaker-top h3 { margin-bottom: 2px; }
+
+.avatar {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--chip);
+  display: grid;
+  place-items: center;
+  font-size: 22px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.speaker-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.speaker-actions button { flex: 1; padding: 9px; }
+
+/* ---------- S3a 등록 마법사 ---------- */
+.wizard {
+  max-width: 820px;
+  margin: 20px auto;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.wizard-steps {
+  display: flex;
+  gap: 10px;
+}
+
+.wizard-step {
+  flex: 1;
+  text-align: center;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--chip);
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.wizard-step.active {
+  background: var(--sidebar);
+  color: #fff;
+  font-weight: 500;
+}
+
+.wizard-step.done { color: var(--text); }
+
+.wizard-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 260px;
+}
+
+.wizard-body h3 { font-size: 17px; }
+.wizard-body input { max-width: 360px; }
+
+.rec-btn {
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  background: var(--danger-bg);
+  color: var(--danger);
+  font-size: 17px;
+  font-weight: 700;
+  margin: 12px auto;
+}
+
+.rec-btn.recording {
+  background: var(--danger);
+  color: #fff;
+}
+
+.progress-track {
+  height: 14px;
+  border-radius: 7px;
+  background: var(--chip);
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: var(--sidebar-active);
+  border-radius: 7px;
+  transition: width 0.3s;
+}
+
+.sample-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sample-chip {
+  background: var(--chip);
+  border-radius: 6px;
+  padding: 7px 14px;
+  font-size: 12px;
+}
+
+.wizard-nav {
+  display: flex;
+  justify-content: space-between;
+}
+
+.wizard-nav button { padding: 12px 24px; font-size: 14px; }
+
+/* ---------- S4 알림 센터 ---------- */
+.alerts-cols {
+  display: grid;
+  grid-template-columns: minmax(0, 4fr) minmax(0, 3fr);
+  gap: 20px;
+  align-items: start;
+}
+
+@media (max-width: 1000px) {
+  .alerts-cols { grid-template-columns: 1fr; }
+}
+
+.alert-list, .rule-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.alert-item {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px 20px;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.alert-title {
+  font-weight: 500;
   font-size: 14px;
 }
 
-th, td {
-  text-align: left;
-  padding: 8px 10px;
-  border-bottom: 1px solid #eee;
+.alert-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 8px;
 }
 
-th {
-  color: #666;
-  font-weight: 600;
+.rule-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
+
+.rule-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.toggle {
+  border-radius: 14px;
+  padding: 5px 16px;
+  font-size: 12px;
+  font-weight: 700;
+  background: var(--chip);
+  color: var(--muted);
+}
+
+.toggle.on {
+  background: var(--ok);
+  color: #fff;
+}
+
+.note { margin-top: 14px; }
+
+/* ---------- M1 이벤트 상세 모달 ---------- */
+.modal-back {
+  position: fixed;
+  inset: 0;
+  background: rgba(38, 41, 51, 0.5);
+  display: grid;
+  place-items: center;
+  z-index: 50;
+  padding: 20px;
+}
+
+.modal {
+  background: var(--card);
+  border-radius: 14px;
+  padding: 32px;
+  width: 720px;
+  max-width: 100%;
+  max-height: calc(100svh - 40px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.modal-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.modal-head h3 { font-size: 17px; }
+.modal h4 { font-size: 15px; margin-top: 6px; }
+
+.wave-box {
+  background: var(--chip);
+  border-radius: 8px;
+  height: 120px;
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  padding: 12px;
+}
+
+.wave-box .muted { margin: auto; }
+
+.wave-bar {
+  flex: 1;
+  background: var(--sidebar-active);
+  border-radius: 2px;
+  min-height: 4px;
+}
+
+.modal-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.sim-track {
+  position: relative;
+  height: 14px;
+  border-radius: 7px;
+  background: var(--chip);
+  overflow: hidden;
+}
+
+.sim-fill {
+  height: 100%;
+  background: var(--sidebar-active);
+  border-radius: 7px;
+}
+
+.sim-threshold {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  background: var(--danger);
+}
+
+.modal-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.modal-actions .primary { margin-left: auto; }

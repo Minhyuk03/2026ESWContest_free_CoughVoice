@@ -4,8 +4,12 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from .api.alerts import router as alerts_router, seed_rules
+from .api.auth import router as auth_router, seed_admin
 from .api.events import router as events_router
-from .db import init_db
+from .api.persons import router as persons_router
+from .api.stats import router as stats_router
+from .db import SessionLocal, init_db
 
 app = FastAPI(
     title="Cough-ID API — 기침 화자 식별 시스템",
@@ -22,11 +26,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(events_router)
+app.include_router(auth_router)
+app.include_router(persons_router)
+app.include_router(alerts_router)
+app.include_router(stats_router)
 
 
 @app.on_event("startup")
 def on_startup() -> None:
     init_db()
+    db = SessionLocal()
+    try:
+        seed_admin(db)   # admin00 초기 계정
+        seed_rules(db)   # 기본 알림 규칙 3종
+    finally:
+        db.close()
 
 
 @app.get("/health", summary="서버 상태 확인", description="서버가 살아있는지 확인하는 헬스체크.")

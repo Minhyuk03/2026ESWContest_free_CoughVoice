@@ -7,13 +7,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..ml.identifier import identifier
-from ..models import CoughEvent
+from ..models import CoughEvent, Person
 
 router = APIRouter(tags=["기침 이벤트"])
 
@@ -71,15 +73,43 @@ def list_events(
     if person is not None:
         q = q.where(CoughEvent.person_id == person)
     rows = db.scalars(q).all()
-    return [
-        {
+    persons = {p.id: p for p in db.scalars(select(Person)).all()}
+    out = []
+    for e in rows:
+        p = persons.get(e.person_id) if e.person_id else None
+        out.append({
             "id": e.id,
             "device_id": e.device_id,
             "captured_at": e.captured_at.isoformat(),
             "received_at": e.received_at.isoformat(),
             "person_id": e.person_id,
+            "person_alias": p.alias if p else None,
+            "person_room": p.room if p else None,
             "similarity": e.similarity,
             "peak_rms": e.peak_rms,
-        }
-        for e in rows
-    ]
+        })
+    return out
+
+
+@router.get("/events/{event_id}/audio", summary="이벤트 오디오 재생", response_class=FileResponse)
+def event_audio(event_id: int, db: Session = Depends(get_db)):
+    e = db.get(CoughEvent, event_id)
+    if e is None or not e.audio_path or not Path(e.audio_path).exists():
+        raise HTTPException(status_code=404, detail="오디오를 찾을 수 없습니다")
+    return FileResponse(e.audio_path, media_type="audio/wav")
+
+
+class EventPersonBody(BaseModel):
+    person_id: Optional[int] = None  # None = 미등록으로 변경
+
+
+@router.patch("/events/{event_id}/person", summary="화자 수정 (오식별 보정, M1)")
+def update_event_person(event_id: int, body: EventPersonBody, db: Session = Depends(get_db)):
+    e = db.get(CoughEvent, event_id)
+    if e is None:
+        raise HTTPException(status_code=404, detail="이벤트를 찾을 수 없습니다")
+    if body.person_id is not None and db.get(Person, body.person_id) is None:
+        raise HTTPException(status_code=404, detail="화자를 찾을 수 없습니다")
+    e.person_id = body.person_id
+    db.commit()
+    return {"ok": True}
