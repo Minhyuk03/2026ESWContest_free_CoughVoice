@@ -15,6 +15,13 @@ import numpy as np
 
 SAMPLE_RATE = 16000  # 파이프라인 전체 기준 샘플레이트
 
+# I2S MEMS 마이크(MS3625, googlevoicehat 오버레이) 하드웨어 스펙 — 2026-08-05 실측
+# ALSA가 S32_LE·2ch·48kHz로만 열리고, 유효 신호는 LEFT 채널뿐이며(RIGHT는 항상 0),
+# 24bit 샘플이 32bit 슬롯 상위에 left-justified로 들어오므로 >>8 시프트가 필요하다.
+MIC_CAPTURE_RATE = 48000
+MIC_RAW_CHANNELS = 2
+MIC_BIT_SHIFT = 8
+
 
 class RingBuffer:
     """최근 max_seconds 초의 오디오(float32 mono)를 유지."""
@@ -80,18 +87,24 @@ class AudioCapture:
     def _run_mic(self) -> None:
         import sounddevice as sd
 
+        decim = MIC_CAPTURE_RATE // SAMPLE_RATE  # 48000/16000 = 3
+        raw_blocksize = self.chunk_samples * decim
+        full_scale = float(2 ** (32 - MIC_BIT_SHIFT - 1))  # 24bit 신호의 최대 진폭
+
         def callback(indata, frames, t, status):
             if status:
                 print(f"[audio] {status}", flush=True)
-            mono = indata[:, 0].astype(np.float32) * self.gain
+            # dtype="int32"이므로 PortAudio가 재스케일링하지 않은 원시 샘플이 그대로 들어온다.
+            left = indata[:, 0] >> MIC_BIT_SHIFT  # 부호 있는 >> 는 numpy에서 산술 시프트
+            mono = (left[::decim].astype(np.float32) / full_scale) * self.gain
             np.clip(mono, -1.0, 1.0, out=mono)
             self._emit(mono)
 
         with sd.InputStream(
-            samplerate=SAMPLE_RATE,
-            channels=1,
-            dtype="float32",
-            blocksize=self.chunk_samples,
+            samplerate=MIC_CAPTURE_RATE,
+            channels=MIC_RAW_CHANNELS,
+            dtype="int32",
+            blocksize=raw_blocksize,
             device=self.device,
             callback=callback,
         ):

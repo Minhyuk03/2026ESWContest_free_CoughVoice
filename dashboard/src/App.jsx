@@ -1,121 +1,96 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
+import { useEffect, useRef, useState } from 'react'
 import './App.css'
 
+const STORAGE_KEY = 'cough-id-server-url'
+const POLL_MS = 2000
+
+function loadServerUrl() {
+  return localStorage.getItem(STORAGE_KEY) || 'http://mh.local:8000'
+}
+
+function formatTime(iso) {
+  return new Date(iso).toLocaleTimeString('ko-KR', { hour12: false })
+}
+
 function App() {
-  const [count, setCount] = useState(0)
+  const [serverUrl, setServerUrl] = useState(loadServerUrl)
+  const [health, setHealth] = useState('checking') // checking | ok | down
+  const [events, setEvents] = useState([])
+  const [error, setError] = useState(null)
+  const pollRef = useRef(null)
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY, serverUrl)
+  }, [serverUrl])
+
+  useEffect(() => {
+    async function poll() {
+      const base = serverUrl.replace(/\/$/, '')
+      try {
+        const h = await fetch(`${base}/health`, { signal: AbortSignal.timeout(3000) })
+        setHealth(h.ok ? 'ok' : 'down')
+      } catch {
+        setHealth('down')
+      }
+      try {
+        const r = await fetch(`${base}/events?limit=30`, { signal: AbortSignal.timeout(3000) })
+        if (r.ok) {
+          setEvents(await r.json())
+          setError(null)
+        }
+      } catch (e) {
+        setError(e.message)
+      }
+    }
+
+    poll()
+    pollRef.current = setInterval(poll, POLL_MS)
+    return () => clearInterval(pollRef.current)
+  }, [serverUrl])
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
+    <div id="app">
+      <header>
+        <h1>기침 이벤트 실시간 피드</h1>
+        <div className="server-row">
+          <span className={`dot ${health}`} title={health} />
+          <input
+            value={serverUrl}
+            onChange={(e) => setServerUrl(e.target.value)}
+            placeholder="http://mh.local:8000"
+            spellCheck={false}
+          />
         </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.jsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
+        {error && <p className="error">연결 실패: {error}</p>}
+      </header>
 
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
+      <main>
+        {events.length === 0 ? (
+          <p className="empty">아직 감지된 이벤트가 없습니다.</p>
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th>시간</th>
+                <th>장치</th>
+                <th>Peak RMS</th>
+                <th>화자</th>
+              </tr>
+            </thead>
+            <tbody>
+              {events.map((ev) => (
+                <tr key={ev.id}>
+                  <td>{formatTime(ev.captured_at)}</td>
+                  <td>{ev.device_id}</td>
+                  <td>{ev.peak_rms?.toFixed(3) ?? '-'}</td>
+                  <td>{ev.person_id ?? 'unknown'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </main>
+    </div>
   )
 }
 

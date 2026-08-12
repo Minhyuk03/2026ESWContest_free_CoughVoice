@@ -2,7 +2,7 @@
 
 사용 예:
   마이크:      python main.py --server http://192.168.0.10:8000
-  I2S 마이크:  python main.py --server http://... --gain 25
+  I2S 마이크:  python main.py --server http://... --gain 5
   파일 테스트: python main.py --server http://localhost:8000 --wav test_cough.wav
 """
 from __future__ import annotations
@@ -19,8 +19,12 @@ def main() -> None:
     p = argparse.ArgumentParser(description="Cough-ID edge")
     p.add_argument("--server", required=True, help="서버 URL (http://IP:8000)")
     p.add_argument("--wav", help="WAV 파일 시뮬레이션 모드 (마이크 없이 테스트)")
-    p.add_argument("--device", default=None, help="sounddevice 장치 index/이름")
-    p.add_argument("--gain", type=float, default=1.0, help="입력 게인 (I2S MEMS는 20~30)")
+    p.add_argument(
+        "--device", default=None,
+        help="sounddevice 장치 index/이름. I2S MEMS 마이크는 'plughw:CARD=sndrpigooglevoi' 권장"
+        " (USB 오디오 연결 시 카드 번호가 바뀌므로 hw:N 대신 이름 사용)",
+    )
+    p.add_argument("--gain", type=float, default=5.0, help="입력 게인 (I2S MEMS 실측 잠정치 ~5x, 거리별로 재측정 필요)")
     p.add_argument("--threshold", type=float, default=0.08, help="RMS 검출 임계치")
     p.add_argument("--device-id", default="rpi5-01")
     args = p.parse_args()
