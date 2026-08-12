@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cough-ID · 실시간 모니터</title>
+<style>
+  :root{
+    --bg:#0b0f14; --panel:#131a23; --panel2:#1a2430; --line:#243040;
+    --tx:#e6edf5; --tx2:#8b9bb0; --acc:#4da3ff;
+    --cough:#ff5c5c; --speech:#3ddc97; --other:#f0b429; --idle:#4a5a6d;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);
+    font-family:-apple-system,BlinkMacSystemFont,"Pretendard","Apple SD Gothic Neo","Segoe UI",sans-serif;}
+  header{display:flex;align-items:center;gap:14px;padding:14px 20px;border-bottom:1px solid var(--line);
+    background:var(--panel);position:sticky;top:0;z-index:5}
+  header h1{font-size:16px;margin:0;letter-spacing:-.2px}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--idle)}
+  .dot.on{background:var(--speech);box-shadow:0 0 8px var(--speech)}
+  .meta{color:var(--tx2);font-size:12px;margin-left:auto;display:flex;gap:16px;flex-wrap:wrap}
+  .wrap{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:16px;padding:16px;max-width:1400px;margin:0 auto}
+  @media(max-width:960px){.wrap{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .card h2{margin:0 0 10px;font-size:12px;font-weight:600;color:var(--tx2);letter-spacing:.6px;text-transform:uppercase}
+
+  /* 판정 카드 */
+  #verdict{display:flex;align-items:center;gap:18px;padding:22px 24px;border-radius:14px;
+    background:var(--panel2);border:1px solid var(--line);transition:background .18s,border-color .18s}
+  #verdict.cough{background:rgba(255,92,92,.13);border-color:var(--cough)}
+  #verdict.speech{background:rgba(61,220,151,.11);border-color:var(--speech)}
+  #verdict.other{background:rgba(240,180,41,.11);border-color:var(--other)}
+  #vIcon{font-size:38px;line-height:1;width:52px;text-align:center}
+  #vLabel{font-size:30px;font-weight:700;letter-spacing:-.5px}
+  #vSub{color:var(--tx2);font-size:13px;margin-top:4px}
+  #vScoreWrap{margin-left:auto;text-align:right}
+  #vScore{font-size:34px;font-weight:700;font-variant-numeric:tabular-nums}
+  #vScoreLbl{font-size:11px;color:var(--tx2)}
+
+  /* 레벨미터 */
+  .meter{height:14px;background:#0d141c;border-radius:7px;overflow:hidden;position:relative;border:1px solid var(--line)}
+  .meter>i{display:block;height:100%;width:0%;background:linear-gradient(90deg,#2c7be5,#3ddc97 60%,#f0b429 85%,#ff5c5c);
+    transition:width .05s linear}
+  .thline{position:absolute;top:0;bottom:0;width:2px;background:#fff;opacity:.55}
+  .row{display:flex;gap:10px;align-items:center;font-size:12px;color:var(--tx2);margin-top:8px}
+  .row b{color:var(--tx);font-variant-numeric:tabular-nums;font-weight:600}
+
+  canvas{width:100%;display:block;border-radius:8px;background:#080c11}
+
+  /* 카운터 */
+  .counts{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+  .cnt{background:var(--panel2);border-radius:10px;padding:12px;text-align:center;border:1px solid var(--line)}
+  .cnt .n{font-size:26px;font-weight:700;font-variant-numeric:tabular-nums}
+  .cnt .l{font-size:11px;color:var(--tx2);margin-top:2px}
+  .cnt.c .n{color:var(--cough)} .cnt.s .n{color:var(--speech)} .cnt.o .n{color:var(--other)}
+
+  /* 로그 */
+  #log{max-height:340px;overflow-y:auto;margin:0;padding:0;list-style:none}
+  #log li{display:flex;align-items:center;gap:10px;padding:8px 6px;border-bottom:1px solid var(--line);font-size:13px}
+  #log li:last-child{border-bottom:none}
+  .tag{font-size:11px;font-weight:700;padding:3px 8px;border-radius:5px;flex:none;min-width:56px;text-align:center}
+  .tag.cough{background:rgba(255,92,92,.2);color:var(--cough)}
+  .tag.speech{background:rgba(61,220,151,.18);color:var(--speech)}
+  .tag.other{background:rgba(240,180,41,.18);color:var(--other)}
+  .lt{color:var(--tx2);font-variant-numeric:tabular-nums;font-size:12px}
+  .ld{margin-left:auto;color:var(--tx2);font-size:11px;font-variant-numeric:tabular-nums;text-align:right}
+
+  /* 특징 바 */
+  .feat{display:grid;grid-template-columns:74px 1fr 40px;gap:8px;align-items:center;margin:7px 0;font-size:12px}
+  .feat .bar{height:8px;background:#0d141c;border-radius:4px;overflow:hidden;border:1px solid var(--line)}
+  .feat .bar>i{display:block;height:100%;background:var(--acc);width:0%}
+  .feat .v{text-align:right;color:var(--tx2);font-variant-numeric:tabular-nums}
+  .feat .k{color:var(--tx2)}
+
+  /* 슬라이더 */
+  .ctl{margin:12px 0}
+  .ctl label{display:flex;justify-content:space-between;font-size:12px;color:var(--tx2);margin-bottom:5px}
+  .ctl label b{color:var(--tx);font-variant-numeric:tabular-nums}
+  input[type=range]{width:100%;accent-color:var(--acc)}
+  button{background:var(--panel2);color:var(--tx);border:1px solid var(--line);border-radius:8px;
+    padding:8px 12px;font-size:12px;cursor:pointer;width:100%}
+  button:hover{border-color:var(--acc)}
+  .hint{font-size:11px;color:var(--tx2);line-height:1.6;margin-top:10px}
+</style>
+</head>
+<body>
+<header>
+  <span class="dot" id="conn"></span>
+  <h1>Cough-ID · 실시간 소리 모니터</h1>
+  <div class="meta">
+    <span>입력 <b id="mSrc">–</b></span>
+    <span>장치 <b id="mDev">–</b></span>
+    <span>노이즈 플로어 <b id="mNoise">–</b> dB</span>
+  </div>
+</header>
+
+<div class="wrap">
+  <!-- 왼쪽 -->
+  <div style="display:flex;flex-direction:column;gap:16px;min-width:0">
+    <div id="verdict">
+      <div id="vIcon">🎧</div>
+      <div>
+        <div id="vLabel">대기 중</div>
+        <div id="vSub">소리를 기다리는 중입니다</div>
+      </div>
+      <div id="vScoreWrap">
+        <div id="vScore">–</div>
+        <div id="vScoreLbl">기침 점수</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>입력 레벨</h2>
+      <div class="meter"><i id="lvl"></i><span class="thline" id="thMark"></span></div>
+      <div class="row">
+        <span>레벨 <b id="mDb">–</b> dB</span>
+        <span>센트로이드 <b id="mCen">–</b> Hz</span>
+        <span>플랫니스 <b id="mFlat">–</b></span>
+        <span>ZCR <b id="mZcr">–</b></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>파형 (최근 12초)</h2>
+      <canvas id="wave" height="120"></canvas>
+    </div>
+
+    <div class="card">
+      <h2>스펙트로그램 (60Hz – 7.8kHz)</h2>
+      <canvas id="spec" height="180"></canvas>
+    </div>
+  </div>
+
+  <!-- 오른쪽 -->
+  <div style="display:flex;flex-direction:column;gap:16px;min-width:0">
+    <div class="card">
+      <h2>누적 감지</h2>
+      <div class="counts">
+        <div class="cnt c"><div class="n" id="cCough">0</div><div class="l">기침</div></div>
+        <div class="cnt s"><div class="n" id="cSpeech">0</div><div class="l">대화</div></div>
+        <div class="cnt o"><div class="n" id="cOther">0</div><div class="l">기타</div></div>
+      </div>
+      <div style="margin-top:10px"><button id="btnReset">카운터 초기화</button></div>
+    </div>
+
+    <div class="card">
+      <h2>마지막 이벤트 근거</h2>
+      <div id="feats"><div class="hint">아직 감지된 이벤트가 없습니다.</div></div>
+    </div>
+
+    <div class="card">
+      <h2>임계값 조정</h2>
+      <div class="ctl">
+        <label>기침 판정 점수 <b id="lTh">0.55</b></label>
+        <input type="range" id="sTh" min="0.2" max="0.9" step="0.01" value="0.55">
+      </div>
+      <div class="ctl">
+        <label>소리 감지 민감도 (+dB) <b id="lTr">12</b></label>
+        <input type="range" id="sTr" min="4" max="30" step="1" value="12">
+      </div>
+      <div class="ctl">
+        <label>이벤트 종료 유예 (프레임) <b id="lHg">10</b></label>
+        <input type="range" id="sHg" min="3" max="30" step="1" value="10">
+      </div>
+      <div class="hint">
+        민감도를 낮추면 작은 소리도 이벤트로 잡히고, 높이면 큰 소리만 잡습니다.<br>
+        판정 점수를 낮추면 기침으로 분류되는 범위가 넓어집니다.
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>이벤트 로그</h2>
+      <ul id="log"></ul>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  var LABEL = {cough:{ko:"기침", icon:"🤧"}, speech:{ko:"대화", icon:"💬"}, other:{ko:"기타 소음", icon:"🔊"}};
+  var $ = function(id){ return document.getElementById(id); };
+
+  // ---------- 캔버스 ----------
+  var wave = $("wave"), wctx = wave.getContext("2d");
+  var spec = $("spec"), sctx = spec.getContext("2d");
+  function fit(c){ var r = c.getBoundingClientRect(); var d = window.devicePixelRatio||1;
+    c.width = Math.max(1, Math.floor(r.width*d)); c.height = Math.floor(parseInt(c.getAttribute("height"))*d);
+    c.getContext("2d").setTransform(d,0,0,d,0,0); }
+  function fitAll(){ fit(wave); fit(spec); drawWave(); }
+  window.addEventListener("resize", fitAll);
+
+  // 파형 히스토리 (dB)
+  var HIST = 750; // 약 12초 (16ms/프레임)
+  var dbHist = new Float32Array(HIST); for(var i=0;i<HIST;i++) dbHist[i] = -90;
+  var actHist = new Uint8Array(HIST);
+  var lastEventLabel = null;
+
+  function dbToY(db, h){ var v = (db + 90) / 90; if(v<0)v=0; if(v>1)v=1; return h - v*h; }
+
+  function drawWave(){
+    var w = wave.clientWidth, h = parseInt(wave.getAttribute("height"));
+    wctx.clearRect(0,0,w,h);
+    // 격자
+    wctx.strokeStyle = "#1a2430"; wctx.lineWidth = 1;
+    for(var g=1; g<4; g++){ var y = h*g/4; wctx.beginPath(); wctx.moveTo(0,y); wctx.lineTo(w,y); wctx.stroke(); }
+    // 활성 구간 음영
+    var step = w / HIST;
+    wctx.fillStyle = "rgba(77,163,255,.10)";
+    var run = -1;
+    for(var i=0;i<HIST;i++){
+      if(actHist[i] && run<0) run = i;
+      if((!actHist[i]||i===HIST-1) && run>=0){ wctx.fillRect(run*step, 0, (i-run)*step, h); run = -1; }
+    }
+    // 레벨 라인
+    wctx.beginPath(); wctx.strokeStyle = "#4da3ff"; wctx.lineWidth = 1.4;
+    for(var j=0;j<HIST;j++){ var x = j*step, y = dbToY(dbHist[j], h);
+      if(j===0) wctx.moveTo(x,y); else wctx.lineTo(x,y); }
+    wctx.stroke();
+  }
+
+  // 스펙트로그램: 오프스크린(1px = 1프레임)에 누적 후 확대 렌더 → 번짐 없음
+  var COLS = 420, NB = 48;
+  var off = document.createElement("canvas");
+  off.width = COLS; off.height = NB;
+  var octx = off.getContext("2d");
+  octx.fillStyle = "#080c11"; octx.fillRect(0,0,COLS,NB);
+
+  function drawSpecCol(bands){
+    octx.drawImage(off, -1, 0);              // 1:1 자기복사 = 무손실 스크롤
+    var n = Math.min(bands.length, NB);
+    for(var i=0;i<n;i++){
+      octx.fillStyle = heat(bands[i]/100);
+      octx.fillRect(COLS-1, NB-1-i, 1, 1);   // 낮은 주파수를 아래쪽에
+    }
+    var w = spec.clientWidth, h = parseInt(spec.getAttribute("height"));
+    sctx.imageSmoothingEnabled = true;
+    sctx.drawImage(off, 0, 0, w, h);
+  }
+  function heat(v){
+    if(v<=0.02) return "#080c11";
+    var r,g,b;
+    if(v<0.4){ var t=v/0.4; r=8+t*20; g=12+t*70; b=17+t*130; }
+    else if(v<0.7){ var t2=(v-0.4)/0.3; r=28+t2*40; g=82+t2*140; b=147+t2*(-40); }
+    else { var t3=(v-0.7)/0.3; r=68+t3*187; g=222+t3*(-60); b=107+t3*(-60); }
+    return "rgb("+(r|0)+","+(g|0)+","+(b|0)+")";
+  }
+
+  // ---------- 판정 카드 ----------
+  var verdict = $("verdict"), resetTimer = null;
+  function showVerdict(ev){
+    var L = LABEL[ev.label] || LABEL.other;
+    verdict.className = ev.label;
+    $("vIcon").textContent = L.icon;
+    $("vLabel").textContent = L.ko;
+    $("vSub").textContent = "길이 " + ev.duration.toFixed(2) + "s · 최대 " + ev.peak_db.toFixed(0)
+      + " dB · 봉우리 " + ev.n_peaks + "개";
+    $("vScore").textContent = ev.score.toFixed(2);
+    clearTimeout(resetTimer);
+    resetTimer = setTimeout(function(){
+      verdict.className = ""; $("vIcon").textContent = "🎧";
+      $("vLabel").textContent = "대기 중"; $("vSub").textContent = "소리를 기다리는 중입니다";
+      $("vScore").textContent = "–";
+    }, 5000);
+  }
+
+  var FEAT_KO = {duration:"지속시간", attack:"onset 속도", shape:"에너지 형태",
+                 centroid:"주파수 중심", flatness:"광대역성", unimodal:"단일 봉우리"};
+  function showFeats(ev){
+    var html = "";
+    for(var k in ev.parts){
+      var p = ev.parts[k], w = ev.weights[k];
+      html += '<div class="feat"><span class="k">'+(FEAT_KO[k]||k)+'</span>'
+           +  '<span class="bar"><i style="width:'+(p*100).toFixed(0)+'%"></i></span>'
+           +  '<span class="v">'+p.toFixed(2)+'</span></div>';
+    }
+    html += '<div class="hint">가중합 = <b style="color:var(--tx)">'+ev.score.toFixed(3)+'</b>'
+         +  ' · 어택 '+(ev.attack_time*1000).toFixed(0)+'ms'
+         +  ' · 센트로이드 '+ev.centroid.toFixed(0)+'Hz'
+         +  ' · 플랫니스 '+ev.flatness.toFixed(3)
+         +  ' · 크레스트 '+ev.crest.toFixed(2)+'</div>';
+    $("feats").innerHTML = html;
+  }
+
+  // ---------- 로그 ----------
+  function addLog(ev){
+    var ul = $("log"), li = document.createElement("li");
+    var t = new Date(ev.t*1000);
+    var hh = ("0"+t.getHours()).slice(-2)+":"+("0"+t.getMinutes()).slice(-2)+":"+("0"+t.getSeconds()).slice(-2);
+    var L = LABEL[ev.label] || LABEL.other;
+    li.innerHTML = '<span class="lt">'+hh+'</span>'
+      + '<span class="tag '+ev.label+'">'+L.ko+'</span>'
+      + '<span class="ld">'+ev.score.toFixed(2)+' · '+ev.duration.toFixed(2)+'s · '+ev.peak_db.toFixed(0)+'dB</span>';
+    ul.insertBefore(li, ul.firstChild);
+    while(ul.children.length > 100) ul.removeChild(ul.lastChild);
+  }
+
+  // ---------- WebSocket ----------
+  var ws, cfgSend = null;
+  function connect(){
+    var proto = location.protocol === "https:" ? "wss" : "ws";
+    ws = new WebSocket(proto + "://" + location.host + "/ws");
+    ws.onopen = function(){ $("conn").classList.add("on"); };
+    ws.onclose = function(){ $("conn").classList.remove("on"); setTimeout(connect, 1500); };
+    ws.onmessage = function(e){ handle(JSON.parse(e.data)); };
+  }
+
+  function handle(m){
+    if(m.type === "hello"){
+      $("mSrc").textContent = m.source;
+      $("mDev").textContent = (m.device && m.device !== "None") ? m.device : "기본";
+      setCounts(m.counts);
+      (m.recent||[]).slice().reverse().forEach(addLog);
+      if(m.config){
+        $("sTh").value = m.config.cough_threshold; $("lTh").textContent = (+m.config.cough_threshold).toFixed(2);
+        $("sTr").value = m.config.trigger_delta;   $("lTr").textContent = m.config.trigger_delta;
+        $("sHg").value = m.config.hang_frames;     $("lHg").textContent = m.config.hang_frames;
+      }
+    } else if(m.type === "frames"){
+      var arr = m.db, n = arr.length;
+      if(n > 0){
+        if(n >= HIST){ for(var i=0;i<HIST;i++){ dbHist[i] = arr[n-HIST+i]; actHist[i] = m.active?1:0; } }
+        else{
+          dbHist.copyWithin(0, n); actHist.copyWithin(0, n);
+          for(var j=0;j<n;j++){ dbHist[HIST-n+j] = arr[j]; actHist[HIST-n+j] = m.active?1:0; }
+        }
+      }
+      drawWave();
+      if(m.bands) drawSpecCol(m.bands);
+      var db = arr.length ? arr[arr.length-1] : -90;
+      $("lvl").style.width = Math.max(0, Math.min(100, (db+90)/90*100)).toFixed(1) + "%";
+      $("thMark").style.left = Math.max(0, Math.min(100, (m.on_th+90)/90*100)).toFixed(1) + "%";
+      $("mDb").textContent = db.toFixed(1);
+      $("mNoise").textContent = m.noise_db.toFixed(1);
+      $("mCen").textContent = m.centroid.toFixed(0);
+      $("mFlat").textContent = m.flatness.toFixed(3);
+      $("mZcr").textContent = m.zcr.toFixed(3);
+    } else if(m.type === "event"){
+      showVerdict(m.event); showFeats(m.event); addLog(m.event); setCounts(m.counts);
+    } else if(m.type === "status" && m.status === "error"){
+      $("vIcon").textContent = "⚠️"; $("vLabel").textContent = "입력 오류";
+      $("vSub").textContent = m.message; verdict.className = "other";
+    }
+  }
+
+  function setCounts(c){
+    if(!c) return;
+    $("cCough").textContent = c.cough||0; $("cSpeech").textContent = c.speech||0; $("cOther").textContent = c.other||0;
+  }
+
+  // ---------- 컨트롤 ----------
+  function sendCfg(vals){ if(ws && ws.readyState === 1) ws.send(JSON.stringify({type:"config", values:vals})); }
+  $("sTh").oninput = function(){ $("lTh").textContent = (+this.value).toFixed(2); sendCfg({cough_threshold:+this.value}); };
+  $("sTr").oninput = function(){ $("lTr").textContent = this.value; sendCfg({trigger_delta:+this.value}); };
+  $("sHg").oninput = function(){ $("lHg").textContent = this.value; sendCfg({hang_frames:+this.value}); };
+  $("btnReset").onclick = function(){
+    if(ws && ws.readyState === 1) ws.send(JSON.stringify({type:"reset"}));
+    $("log").innerHTML = ""; setCounts({cough:0,speech:0,other:0});
+  };
+
+  fitAll();
+  connect();
+})();
+</script>
+</body>
+</html>

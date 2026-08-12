@@ -1,6 +1,6 @@
 # Cough ID — 기침 소리 기반 화자 식별 시스템
 
-> 제 26회 임베디드 소프트웨어 경진대회 출품작
+> 제 24회 임베디드 소프트웨어 경진대회 출품작
 > 기숙사·요양시설 등 다인 거주 환경에서 **기침 소리만으로 누가 기침했는지 식별**하고, 이상 징후(빈발 기침)를 관리자·보호자에게 실시간 알리는 시스템. 무조작·비착용 — 거주자는 아무것도 하지 않아도 된다.
 
 ## 1. 시스템 구성
@@ -15,6 +15,7 @@
 | 엣지 (`edge/`) | 오디오 상시 캡처 → 기침 검출(에너지+CNN) → 2~3초 절단 → 서버 전송(실패 시 재시도 큐) | Python, sounddevice, tflite |
 | 서버 (`server/`) | 이벤트 수신 → log-mel 특징 추출 → ECAPA-TDNN 임베딩 → 코사인 매칭 → 알림 규칙 평가 → WebSocket 푸시 | FastAPI, SQLAlchemy, SpeechBrain |
 | 대시보드 (`dashboard/`) | 실시간 피드, 이력 조회, 화자 등록, 알림 규칙 설정 (7개 화면) | React + Vite, Recharts |
+| 모니터 (`monitor/`) | 마이크 입력을 실시간 분석해 **기침/대화/기타**를 화면에서 즉시 확인 — 검출 임계값 튜닝·시연용 독립 도구 | Python, FastAPI, WebSocket |
 
 - 성능 목표: 기침 발생 → 대시보드 표시 **≤ 3초** (NFR-03)
 - 프라이버시: 실명 대신 alias, 임베딩만 저장·원본 음성 비보존 (NFR-06)
@@ -38,8 +39,38 @@ cough-id/
 │       ├── db.py
 │       └── main.py
 ├── dashboard/             # React + Vite 웹 대시보드
+├── monitor/               # 실시간 소리 모니터 (기침/대화 판별 튜닝·데모용 독립 도구)
+│   ├── audio_source.py    #   sounddevice / arecord I2S / 시뮬레이션 입력
+│   ├── classifier.py      #   규칙 기반 기침·대화 판별
+│   ├── server.py          #   FastAPI + WebSocket
+│   └── static/index.html  #   단일 파일 대시보드 UI
+├── tools/                 # 개발·수집 보조 스크립트 (라즈베리파이에서 실행)
+│   ├── i2s_mic_check.py   #   I2S 마이크 배선 진단
+│   └── collect_cough.py   #   기침 샘플 수집 + 자동 라벨링
 └── docs/                  # 설계 문서 (UML, 스토리보드 등)
 ```
+
+### 하드웨어 (2026-08-05 검증 완료)
+
+I2S MEMS 마이크(MS3625) 1개를 라즈베리파이 5에 연결해 실제 오디오 캡처를 검증했다.
+배선표·오버레이 설정·캡처 파라미터는 [`docs/hardware_i2s_mic.md`](docs/hardware_i2s_mic.md) 참조.
+
+핵심 값만 요약하면:
+
+| 항목 | 값 |
+|---|---|
+| ALSA 장치 | `hw:2` (card 0 아님) |
+| 포맷 | `S32_LE` / 2ch / 48000 Hz |
+| 유효 채널 | LEFT만 (RIGHT는 항상 0) |
+| 비트 정렬 | 24bit가 32bit 슬롯에 left-justified → **`>> 8` 시프트 필수** |
+
+### 데이터 수집
+
+기침 샘플 수집 프로토콜(거리·횟수·라벨링 규칙·품질 기준)은 [`docs/data_collection_protocol.md`](docs/data_collection_protocol.md) 참조.
+
+> **등록용과 검증용은 반드시 다른 날에 녹음할 것.** 한 세션에서 몰아 찍고 그 안에서 학습/검증을 나누면 모델이 화자의 목소리가 아니라 그날의 녹음 환경을 외운다. 측정 정확도가 부풀려지고 데모에서 무너진다.
+
+수집된 음성(`cough_data/`, `*.wav`)은 개인 식별 정보이므로 `.gitignore`로 커밋을 차단해 두었다.
 
 ## 3. 개발 과정 (P1~P8)
 
@@ -103,7 +134,7 @@ RPi 배포 시 systemd 서비스로 등록해 부팅 시 자동 시작.
 
 - 브랜치: `main` 보호(PR 필수) · `feat/edge-*` · `feat/server-*` · `feat/dash-*`
 - 커밋 메시지: `P<단계>: 내용` (예: `P2: events 라우터 구현`)
-- 진행 상황·산출물은 노션 "제 26회 임베디드 소프트웨어 경진대회" 페이지에 공유
+- 진행 상황·산출물은 노션 "제 24회 임베디드 소프트웨어 경진대회" 페이지에 공유
 
 ## 6. 팀
 
