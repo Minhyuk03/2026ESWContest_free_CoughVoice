@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -14,6 +15,12 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..models import CoughEvent, Person
+
+
+def _iso_utc(dt: Optional[datetime]) -> Optional[str]:
+    if dt is None:
+        return None
+    return (dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt).isoformat()
 
 router = APIRouter(prefix="/persons", tags=["화자 관리"])
 
@@ -33,8 +40,8 @@ def _person_row(db: Session, p: Person) -> dict:
         "alias": p.alias,
         "room": p.room,
         "sample_count": p.sample_count or 0,
-        "created_at": p.created_at.isoformat() if p.created_at else None,
-        "last_cough_at": last.isoformat() if last else None,
+        "created_at": _iso_utc(p.created_at),
+        "last_cough_at": _iso_utc(last),
     }
 
 

@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import random
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from sqlalchemy import select
@@ -34,7 +34,7 @@ def main() -> None:
         # 재생 테스트용으로 기존 저장 오디오가 있으면 재활용
         wavs = sorted(Path("audio_store").glob("*.wav"))
         rng = random.Random(42)
-        now = datetime.now().astimezone()
+        now = datetime.now(timezone.utc)  # DB 시각 컬럼은 UTC 기준으로 통일
         for i in range(28):
             captured = now - timedelta(minutes=rng.randint(3, 60 * 14))
             registered = rng.random() < 0.8

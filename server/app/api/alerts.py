@@ -1,6 +1,7 @@
 """AlertsAPI — 알림 이력·규칙 (S1 배너, S4 알림 센터)."""
 from __future__ import annotations
 
+from datetime import timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -41,7 +42,8 @@ def list_alerts(limit: int = 50, db: Session = Depends(get_db)):
             "person_id": a.person_id,
             "person_alias": person.alias if person else None,
             "person_room": person.room if person else None,
-            "created_at": a.created_at.isoformat(),
+            "created_at": (a.created_at.replace(tzinfo=timezone.utc)
+                           if a.created_at.tzinfo is None else a.created_at).isoformat(),
         })
     return out
 

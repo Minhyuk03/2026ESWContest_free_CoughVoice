@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -21,6 +21,13 @@ router = APIRouter(tags=["기침 이벤트"])
 
 AUDIO_DIR = Path("audio_store")
 AUDIO_DIR.mkdir(exist_ok=True)
+
+
+def iso_utc(dt: datetime) -> str:
+    """SQLite는 tz를 버리고 저장하므로, naive 값은 UTC로 간주해 오프셋을 붙여 반환한다."""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.isoformat()
 
 
 @router.post(
@@ -41,9 +48,12 @@ async def create_event(
 
     result = identifier.identify(str(wav_path))  # P2: 항상 unknown
 
+    captured = datetime.fromisoformat(m["captured_at"])
+    if captured.tzinfo is not None:
+        captured = captured.astimezone(timezone.utc)  # DB에는 UTC 기준으로 통일 저장
     event = CoughEvent(
         device_id=m.get("device_id", "unknown"),
-        captured_at=datetime.fromisoformat(m["captured_at"]),
+        captured_at=captured,
         person_id=result.person_id,
         similarity=result.similarity,
         peak_rms=m.get("peak_rms"),
@@ -80,8 +90,8 @@ def list_events(
         out.append({
             "id": e.id,
             "device_id": e.device_id,
-            "captured_at": e.captured_at.isoformat(),
-            "received_at": e.received_at.isoformat(),
+            "captured_at": iso_utc(e.captured_at),
+            "received_at": iso_utc(e.received_at),
             "person_id": e.person_id,
             "person_alias": p.alias if p else None,
             "person_room": p.room if p else None,
