@@ -41,17 +41,25 @@ CLIP_THRESHOLD = 0.90         # 90% 초과면 클리핑 위험
 VALID_TYPES = ["dry", "natural", "throat", "speech", "laugh", "noise"]
 
 
+POP_TRIM_S = 0.1  # 장치 오픈 직후 팝 노이즈 회피용 트림(초)
+
+
 def record_raw(device, seconds):
-    """arecord로 raw S32_LE 스테레오를 받아 왼쪽 채널(24bit 정렬)을 반환."""
+    """arecord로 raw S32_LE 스테레오를 받아 왼쪽 채널(24bit 정렬)을 반환.
+    장치 오픈 직후 팝 노이즈를 피하려고 여유분을 더 녹음한 뒤 앞부분을 잘라낸다."""
+    capture_s = int(seconds) + 1
     proc = subprocess.run(
         ["arecord", "-D", device, "-c", "2", "-r", str(RATE),
-         "-f", "S32_LE", "-d", str(seconds), "-t", "raw", "-q"],
+         "-f", "S32_LE", "-d", str(capture_s), "-t", "raw", "-q"],
         capture_output=True,
     )
     if proc.returncode != 0:
         sys.exit(f"arecord 실패:\n{proc.stderr.decode(errors='replace')}")
     stereo = np.frombuffer(proc.stdout, dtype=np.int32).reshape(-1, 2)
-    return stereo[:, 0] >> 8   # 왼쪽 채널만, left-justified 보정
+    mono = stereo[:, 0] >> 8
+    trim = int(RATE * POP_TRIM_S)
+    target = int(RATE * seconds)
+    return mono[trim:trim + target]   # 왼쪽 채널, left-justified 보정 + 팝 트림
 
 
 def inspect(mono):
