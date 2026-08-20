@@ -2,6 +2,9 @@ fastapi
 uvicorn[standard]
 sqlalchemy
 python-multipart
-# P3 식별 모듈에서 추가:
-# speechbrain
-# torchaudio
+# P3 화자 식별:
+speechbrain
+torch
+torchaudio
+# P4 기침 게이트 (AudioSet 사전학습 PANNs):
+panns-inference

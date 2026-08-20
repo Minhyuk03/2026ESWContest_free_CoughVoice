@@ -7,13 +7,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..db import get_db
+from ..ml.cough_gate import gate
 from ..ml.identifier import identifier
 from ..models import CoughEvent, Person
 
@@ -35,9 +36,12 @@ def iso_utc(dt: datetime) -> str:
     status_code=201,
     summary="기침 이벤트 수신",
     description="엣지 디바이스가 검출한 기침 오디오(WAV)와 메타데이터를 업로드한다. "
-    "서버는 오디오를 저장하고 화자 식별을 수행한다(현재는 스텁 — 항상 unknown).",
+    "서버는 오디오를 저장한 뒤 (1) 기침인지 판정하고 (2) 기침일 때만 화자를 식별한다. "
+    "기침이 아니면 이벤트를 만들지 않고 200과 함께 rejected를 돌려준다. "
+    "등록 화자가 없거나 유사도가 임계치 미만이면 unknown으로 남는다(FR-05).",
 )
 async def create_event(
+    response: Response,
     audio: UploadFile = File(...),
     meta: str = Form(...),
     db: Session = Depends(get_db),
@@ -46,7 +50,19 @@ async def create_event(
     wav_path = AUDIO_DIR / f"{uuid.uuid4().hex}.wav"
     wav_path.write_bytes(await audio.read())
 
-    result = identifier.identify(str(wav_path))  # P2: 항상 unknown
+    # 1차 게이트 — 기침이 아니면 화자 식별로 넘기지 않는다.
+    # 엣지 검출기는 에너지만 보므로 박수·문 닫기·말소리가 여기까지 올라온다.
+    is_cough, cough_score = gate.check(str(wav_path))
+    if not is_cough:
+        wav_path.unlink(missing_ok=True)
+        response.status_code = 200
+        return {"id": None, "rejected": True, "reason": "not_cough",
+                "cough_score": cough_score}
+
+    # 등록 임베딩이 있는 화자만 후보로 넘긴다 (P3 — 스텁 교체)
+    registry = [(p.id, p.embedding_ref)
+                for p in db.scalars(select(Person)).all() if p.embedding_ref]
+    result = identifier.identify(str(wav_path), registry)
 
     captured = datetime.fromisoformat(m["captured_at"])
     if captured.tzinfo is not None:
@@ -63,7 +79,8 @@ async def create_event(
     db.commit()
     db.refresh(event)
     # P5에서 여기에 AlertEngine.evaluate() + WebSocket 브로드캐스트 추가
-    return {"id": event.id, "person_id": event.person_id, "similarity": event.similarity}
+    return {"id": event.id, "person_id": event.person_id,
+            "similarity": event.similarity, "cough_score": cough_score}
 
 
 @router.get(

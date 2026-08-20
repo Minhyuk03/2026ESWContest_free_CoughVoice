@@ -5,15 +5,19 @@
 """
 from __future__ import annotations
 
+import shutil
+import tempfile
 from datetime import datetime, timezone
-from typing import Optional
+from pathlib import Path
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..db import get_db
+from ..ml.identifier import identifier
 from ..models import CoughEvent, Person
 
 
@@ -23,6 +27,8 @@ def _iso_utc(dt: Optional[datetime]) -> Optional[str]:
     return (dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt).isoformat()
 
 router = APIRouter(prefix="/persons", tags=["화자 관리"])
+
+MIN_ENROLL_SAMPLES = 5   # 이보다 적으면 평균 임베딩이 그날의 발성 하나에 끌려간다
 
 
 class PersonBody(BaseModel):
@@ -70,6 +76,40 @@ def update_person(person_id: int, body: PersonBody, db: Session = Depends(get_db
     p.room = body.room
     if body.sample_count:
         p.sample_count = body.sample_count
+    db.commit()
+    return _person_row(db, p)
+
+
+@router.post("/{person_id}/samples", summary="등록용 샘플 업로드 (S3a 마법사)",
+             description="기침 샘플 WAV 여러 개를 받아 평균 임베딩을 만들어 저장한다. "
+                         "원본 음성은 저장하지 않고 임시 파일로만 쓰고 지운다(NFR-06).")
+async def upload_samples(person_id: int,
+                         files: List[UploadFile] = File(...),
+                         db: Session = Depends(get_db)):
+    p = db.get(Person, person_id)
+    if p is None:
+        raise HTTPException(status_code=404, detail="화자를 찾을 수 없습니다")
+    if len(files) < MIN_ENROLL_SAMPLES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"등록에는 최소 {MIN_ENROLL_SAMPLES}개 샘플이 필요합니다")
+
+    tmp_dir = Path(tempfile.mkdtemp(prefix="enroll_"))
+    try:
+        paths = []
+        for i, f in enumerate(files):
+            q = tmp_dir / f"{i:03d}.wav"
+            q.write_bytes(await f.read())
+            paths.append(str(q))
+        try:
+            blob, n = identifier.enroll(paths)
+        except Exception as exc:   # 포맷 오류·모델 로딩 실패를 400으로 되돌린다
+            raise HTTPException(status_code=400, detail=f"임베딩 생성 실패: {exc}")
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)   # 원본 음성 비보존
+
+    p.embedding_ref = blob
+    p.sample_count = n
     db.commit()
     return _person_row(db, p)
 
