@@ -36,6 +36,7 @@ import torch._dynamo  # noqa: F401
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "server"))
 from app.ml.features import crop_peaks, normalize_rms, read_wav  # noqa: E402
 from app.ml.identifier import SpeakerIdentifier, _l2_normalize  # noqa: E402
+from app.ml.projection import Projection  # noqa: E402  — 서버와 같은 정의를 쓴다
 
 DATA = os.path.expanduser("~/datasets/Coswara/coughs")
 CACHE = os.path.expanduser("~/.cache/coughid/coswara_embeddings_mc.npz")
@@ -60,6 +61,7 @@ def embed_crops(ident, path: str, n_crops: int) -> list[np.ndarray]:
         wav = torch.from_numpy(
             np.ascontiguousarray(normalize_rms(t.squeeze(0).numpy()))).unsqueeze(0)
         with torch.no_grad():
+            # 여기서는 투영을 적용하지 않는다. 투영층을 학습하는 중이므로 원본 임베딩이 필요하다.
             out.append(_l2_normalize(model.encode_batch(wav).squeeze().cpu().numpy()))
     return out
 
@@ -157,20 +159,6 @@ def report(label, X, spk, role, keep, project=None):
 
 
 # --------------------------------------------------------------- 학습
-class Projection(nn.Module):
-    """192차원 ECAPA 임베딩 → 기침 화자 판별에 맞춘 공간으로 재배치."""
-
-    def __init__(self, dim_in=192, hidden=512, dim_out=128):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(dim_in, hidden), nn.BatchNorm1d(hidden), nn.ReLU(),
-            nn.Linear(hidden, dim_out), nn.BatchNorm1d(dim_out),
-        )
-
-    def forward(self, x):
-        return nn.functional.normalize(self.net(x), dim=1)
-
-
 class AAMSoftmax(nn.Module):
     """각도 마진 손실 — 화자 분류를 통해 임베딩 사이 각도를 벌린다."""
 

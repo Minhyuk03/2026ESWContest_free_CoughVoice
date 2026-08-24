@@ -16,18 +16,24 @@ import numpy as np
 import torch
 
 from .features import preprocess
+from .projection import projection
 
 MODEL_SOURCE = "speechbrain/spkrec-ecapa-voxceleb"
 MODEL_DIR = os.environ.get(
     "COUGHID_MODEL_DIR", os.path.expanduser("~/.cache/coughid/ecapa"))
 EMBED_DIM = 192
 
-# 잠정 임계치 0.45 — 2026-08-20 측정 근거:
-#   s01 등록(ses01 10개) → 검증(ses02 20개) 동일인 유사도 평균 0.600, 최저 0.422.
-#   0.45에서 FRR 10%, 0.60에서는 FRR 50%로 실사용 불가였다.
-# 다만 **등록 화자가 1명뿐이라 FAR(타인 수락률)을 측정하지 못했다.** s02 수집 후
-# tools/eval_identify.py의 임계치 곡선으로 반드시 재확정할 것 — 감으로 정하지 말 것.
-DEFAULT_THRESHOLD = float(os.environ.get("COUGHID_THRESHOLD", "0.45"))
+# 임계치 0.40 — 2026-08-24 측정 근거 (Coswara 투영층 적용 기준):
+#   동일인 30건(s01 ses02 20 + x01 10) vs 타인 20건(s02). EER 15.8%.
+#     0.30 → 재현율 83% / FAR 15% / 정밀도 89%
+#     0.35 → 재현율 80% / FAR  5% / 정밀도 96%
+#     0.40 → 재현율 70% / FAR  0% / 정밀도 100%   ← 채택
+#   "확신할 때만 이름을 붙이고 나머지는 unknown"이 이 시스템에 맞는 동작이라
+#   정밀도를 우선했다. 잘못된 이름은 이력을 오염시키지만 unknown은 그렇지 않다.
+#
+#   주의: 타인 표본이 s02 한 명(20건)뿐이다. FAR 0%의 95% 신뢰 상한은 약 15%다.
+#   화자를 늘려 재확인할 것. 투영층 없이 원본 임베딩만 쓰면 EER 34.2%로 떨어진다.
+DEFAULT_THRESHOLD = float(os.environ.get("COUGHID_THRESHOLD", "0.40"))
 
 
 class IdentifyResult:
@@ -62,13 +68,18 @@ class SpeakerIdentifier:
                 source=MODEL_SOURCE, savedir=MODEL_DIR)
         return self._model
 
-    def embed(self, wav_path: str, **prep) -> np.ndarray:
-        """WAV 1개 → L2 정규화된 192차원 임베딩. prep은 preprocess로 그대로 전달된다."""
+    def embed(self, wav_path: str, project: bool = True, **prep) -> np.ndarray:
+        """WAV 1개 → L2 정규화된 임베딩. prep은 preprocess로 그대로 전달된다.
+
+        기본은 투영층까지 적용한 128차원이다. 투영층을 **학습하거나 평가하는**
+        코드는 project=False로 원본 192차원을 받아야 한다 — 그러지 않으면 투영이
+        두 번 걸린다.
+        """
         model = self._ensure_model()
         wav = preprocess(wav_path, **prep)
         with torch.no_grad():
             emb = model.encode_batch(wav).squeeze().cpu().numpy()
-        return _l2_normalize(emb)
+        return _l2_normalize(projection.apply(emb) if project else emb)
 
     def enroll(self, wav_paths: Iterable[str], **prep) -> tuple[bytes, int]:
         """등록 샘플들의 평균 임베딩을 반환한다 → Person.embedding_ref, sample_count.

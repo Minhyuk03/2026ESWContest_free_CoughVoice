@@ -40,9 +40,9 @@ def main():
 
     ident = SpeakerIdentifier()
     print("임베딩 추출 중...", flush=True)
-    enroll = np.stack([ident.embed(p) for p in paths(speaker="s01", session="1")])
-    genuine_x = np.stack([ident.embed(p) for p in paths(speaker="s01", session="2")])
-    impostor_x = np.stack([ident.embed(p) for p in paths(speaker="x01")
+    enroll = np.stack([ident.embed(p, project=False) for p in paths(speaker="s01", session="1")])
+    genuine_x = np.stack([ident.embed(p, project=False) for p in paths(speaker="s01", session="2")])
+    impostor_x = np.stack([ident.embed(p, project=False) for p in paths(speaker="x01")
                            + paths(speaker="s02")])
     print(f"  등록 {len(enroll)}개 · 동일인 {len(genuine_x)}개 · 타인 {len(impostor_x)}개\n")
 

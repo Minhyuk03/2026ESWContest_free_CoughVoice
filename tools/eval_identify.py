@@ -87,7 +87,7 @@ def evaluate(rows, enroll_ses, test_ses, prep, verbose=True):
         if enrolled and int(r["session"]) == enroll_ses:
             continue                        # 등록에 쓴 녹음은 시험하지 않는다
 
-        emb = ident.embed(r["path"], **prep)
+        emb = ident.embed(r["path"], project=False, **prep)
         res = ident.match(emb, registry)
         sim = res.similarity if res.similarity is not None else -1.0
         best_id = _argmax_id(emb, registry)
@@ -120,7 +120,7 @@ def channel_bias_check(ident, rows, registry, prep):
     negs = defaultdict(list)
     for r in rows:
         if r["speaker"] == NEG_SPEAKER:
-            emb = ident.embed(r["path"], **prep)
+            emb = ident.embed(r["path"], project=False, **prep)
             negs[r["type"]].append(_best_sim(emb, registry))
     if not negs:
         return None
