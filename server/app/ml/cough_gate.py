@@ -75,6 +75,12 @@ class CoughGate:
         """모델 로딩은 첫 호출까지 미룬다 — 서버 기동과 테스트 비용을 줄이기 위함."""
         if self._tagger is None:
             _ensure_assets()
+            # speechbrain이 이미 적재돼 있다면(식별 모듈이 먼저 쓰였을 때) 지연 모듈을
+            # 무력화해 둔다. 예외가 나면 traceback 출력 중에 그것들이 깨어나
+            # 원래 에러를 가려버린다.
+            from ._speechbrain_compat import neutralize_lazy_modules
+            neutralize_lazy_modules()
+
             from panns_inference import AudioTagging
             self._tagger = AudioTagging(checkpoint_path=CHECKPOINT, device="cpu")
         return self._tagger

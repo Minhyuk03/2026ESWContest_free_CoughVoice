@@ -70,6 +70,13 @@ class SpeakerIdentifier:
         """모델 로딩은 첫 호출까지 미룬다 — 서버 기동 시간과 테스트 비용을 줄이기 위함."""
         if self._model is None:
             from speechbrain.inference.speaker import EncoderClassifier
+
+            # speechbrain 지연 모듈이 나중에 무관한 코드(linecache 등)에서 깨어나
+            # 미설치 의존성을 끌어오며 죽는 것을 막는다. 특히 예외 출력 경로에서
+            # 발생하면 원래 에러가 가려져 원인 추적이 불가능해진다.
+            from ._speechbrain_compat import neutralize_lazy_modules
+            neutralize_lazy_modules()
+
             self._model = EncoderClassifier.from_hparams(
                 source=MODEL_SOURCE, savedir=MODEL_DIR)
         return self._model
