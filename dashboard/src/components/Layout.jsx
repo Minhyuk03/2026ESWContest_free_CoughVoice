@@ -5,7 +5,7 @@ const MENU = [
   { to: '/', label: '대시보드', end: true },
   { to: '/history', label: '기침 이력' },
   { to: '/speakers', label: '화자 관리' },
-  { to: '/alerts', label: '알림 센터' },
+  { to: '/alert-center', label: '알림 센터' },
 ]
 
 export default function Layout() {

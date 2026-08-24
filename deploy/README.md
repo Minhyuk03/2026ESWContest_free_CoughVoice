@@ -34,6 +34,24 @@ scp ~/.cache/coughid/projection.npz <사용자>@mhui-Macmini.local:~/.cache/coug
 
 ECAPA와 PANNs 체크포인트(약 400MB)는 첫 요청 처리 시 자동으로 내려받는다.
 
+### 대시보드
+
+서버가 `dashboard/dist`를 직접 서빙한다. 별도 프로세스가 필요 없다.
+
+    http://mhui-Macmini.local:8000/
+
+같은 출처에서 열리므로 **로그인 화면의 서버 주소를 비워둬도 된다**. IP가 바뀌어도
+화면이 열린 주소를 그대로 따라간다.
+
+코드를 고친 뒤에는 다시 빌드해야 반영된다.
+
+```bash
+cd ~/srv/Cough_EmbeddedSystem/dashboard && npm run build
+```
+
+**주의**: 화면 경로 중 알림 센터는 `/alert-center`다. `/alerts`는 API 엔드포인트라
+같은 서버에서 서빙하면 API가 먼저 잡혀 화면이 열리지 않는다.
+
 ## 엣지 (라즈베리파이)
 
 ```bash

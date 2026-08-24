@@ -5,7 +5,13 @@ const TOKEN_KEY = 'cough-id-token'
 const USER_KEY = 'cough-id-username'
 
 export function getServerUrl() {
-  return localStorage.getItem(URL_KEY) || 'http://localhost:8000'
+  const saved = localStorage.getItem(URL_KEY)
+  if (saved) return saved
+  // 서버가 이 대시보드를 직접 서빙하면 같은 출처를 쓴다. 그러면 서버 주소를
+  // 입력할 필요가 없고, IP가 바뀌어도 화면이 열린 주소를 그대로 따라간다.
+  // vite dev(5173)로 띄운 개발 중에만 기본값 8000으로 넘어간다.
+  const { origin, port } = window.location
+  return port === '5173' ? 'http://localhost:8000' : origin
 }
 
 export function setServerUrl(url) {

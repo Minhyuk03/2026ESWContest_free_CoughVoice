@@ -1,8 +1,12 @@
 """FastAPI 엔트리 — uvicorn app.main:app --reload --host 0.0.0.0"""
 from __future__ import annotations
 
-from fastapi import FastAPI
+from pathlib import Path
+
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from .api.alerts import router as alerts_router, seed_rules
 from .api.auth import router as auth_router, seed_admin
@@ -46,3 +50,29 @@ def on_startup() -> None:
 @app.get("/health", summary="서버 상태 확인", description="서버가 살아있는지 확인하는 헬스체크.")
 def health():
     return {"status": "ok"}
+
+
+# --------------------------------------------------------------------------
+# 웹 대시보드 정적 서빙
+#
+# 빌드 결과(dashboard/dist)가 있으면 이 서버가 직접 서빙한다. 그러면 프로세스와
+# 포트가 하나로 줄고, 대시보드가 API와 같은 출처에서 열려 CORS도 서버 주소 입력도
+# 필요 없어진다. 빌드가 없으면 API 전용으로 동작한다(개발 중에는 vite dev 서버 사용).
+#
+# **이 블록은 모든 API 라우터 등록 뒤에 와야 한다.** catch-all이 먼저 잡히면
+# API 요청이 index.html로 응답된다.
+DIST = Path(__file__).resolve().parents[2] / "dashboard" / "dist"
+
+if DIST.is_dir():
+    app.mount("/assets", StaticFiles(directory=DIST / "assets"), name="assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    def spa_fallback(full_path: str):
+        """React Router가 클라이언트에서 경로를 처리하므로 없는 경로는 index.html로 넘긴다."""
+        candidate = DIST / full_path
+        if full_path and candidate.is_file():
+            return FileResponse(candidate)          # favicon 등 루트 정적 파일
+        index = DIST / "index.html"
+        if not index.is_file():
+            raise HTTPException(status_code=404, detail="대시보드 빌드를 찾을 수 없습니다")
+        return FileResponse(index)

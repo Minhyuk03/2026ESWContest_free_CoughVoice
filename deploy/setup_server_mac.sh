@@ -38,7 +38,17 @@ say "3/5 가상환경 ($VENV)"
 "$VENV/bin/pip" install -q -r "$SRV_DIR/server/requirements.txt"
 echo "  설치 완료"
 
-say "4/5 모델 자산 확인"
+say "4/6 대시보드 빌드"
+if command -v npm >/dev/null; then
+  ( cd "$SRV_DIR/dashboard" && npm ci --silent 2>/dev/null || npm install --silent )
+  ( cd "$SRV_DIR/dashboard" && npm run build )
+  echo "  빌드 완료 — 서버가 http://$(scutil --get LocalHostName).local:8000/ 에서 대시보드를 서빙합니다"
+else
+  echo "  npm이 없어 대시보드를 빌드하지 못했습니다. API 전용으로 동작합니다."
+  echo "  Node.js를 설치한 뒤 다시 실행하면 대시보드도 함께 서빙됩니다."
+fi
+
+say "5/6 모델 자산 확인"
 if [ -f "$PROJ" ]; then
   echo "  투영층 가중치 있음: $PROJ"
 else
@@ -56,7 +66,7 @@ fi
 mkdir -p "$HOME/.cache/coughid"
 echo "  ECAPA·PANNs 체크포인트는 첫 요청 처리 시 자동으로 내려받습니다 (약 400MB, 1회)."
 
-say "5/5 동작 확인"
+say "6/6 동작 확인"
 cd "$SRV_DIR/server"
 "$VENV/bin/python" - <<'PY'
 import sys; sys.path.insert(0, ".")
@@ -69,6 +79,9 @@ PY
 cat <<MSG
 
 설치 완료.
+
+  대시보드: http://$(scutil --get LocalHostName).local:8000/
+  (서버가 직접 서빙하므로 별도 실행이 필요 없고, 로그인 화면의 서버 주소도 비워두면 됩니다)
 
   서버 수동 실행:
     cd $SRV_DIR/server && $VENV/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
