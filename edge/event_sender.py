@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import queue
 import threading
 import time
 import uuid
@@ -20,6 +21,7 @@ class EventSender:
         device_id: str = "rpi5-01",
         timeout: float = 5.0,
         max_backoff: float = 60.0,
+        outbox_size: int = 32,
     ):
         self.endpoint = server_url.rstrip("/") + "/events"
         self.device_id = device_id
@@ -27,18 +29,43 @@ class EventSender:
         self.max_backoff = max_backoff
         QUEUE_DIR.mkdir(exist_ok=True)
         self._stop = threading.Event()
+        # send()는 sounddevice 오디오 콜백 안에서 호출된다. 거기서 HTTP를 기다리면
+        # 콜백이 막혀 마이크 버퍼가 넘치고 "input overflow"로 오디오가 유실된다
+        # (2026-08-24 실기에서 확인). 그래서 send()는 큐에 넣기만 하고,
+        # 실제 전송은 이 워커 스레드가 맡는다.
+        self._outbox: "queue.Queue[tuple[bytes, dict]]" = queue.Queue(maxsize=outbox_size)
+        self._dropped = 0
+        self._worker = threading.Thread(target=self._send_loop, daemon=True)
+        self._worker.start()
         self._thread = threading.Thread(target=self._retry_loop, daemon=True)
         self._thread.start()
 
     # ------------------------------------------------------------------
     def send(self, wav_bytes: bytes, peak_rms: float) -> None:
+        """오디오 콜백에서 호출된다 — 절대 블로킹하지 않는다."""
         meta = {
             "device_id": self.device_id,
             "captured_at": datetime.now(timezone.utc).isoformat(),
             "peak_rms": round(peak_rms, 4),
         }
-        if not self._post(wav_bytes, meta):
-            self._enqueue(wav_bytes, meta)
+        try:
+            self._outbox.put_nowait((wav_bytes, meta))
+        except queue.Full:
+            # 큐가 찼다는 건 검출이 전송보다 빠르다는 뜻이다. 여기서 기다리면
+            # 오디오가 끊기므로 버린다. 대신 몇 개를 버렸는지 알린다.
+            self._dropped += 1
+            if self._dropped % 20 == 1:
+                print(f"[sender] 전송 큐 포화 — 누적 {self._dropped}건 폐기 "
+                      f"(검출 임계치를 올리거나 서버 처리를 늘려야 함)", flush=True)
+
+    def _send_loop(self) -> None:
+        while not self._stop.is_set():
+            try:
+                wav_bytes, meta = self._outbox.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            if not self._post(wav_bytes, meta):
+                self._enqueue(wav_bytes, meta)
 
     def stop(self) -> None:
         self._stop.set()
