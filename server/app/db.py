@@ -35,6 +35,20 @@ def _migrate() -> None:
         if "sample_count" not in cols:
             conn.execute(text("ALTER TABLE persons ADD COLUMN sample_count INTEGER DEFAULT 0"))
 
+        # P5 — 알림 규칙 평가 파라미터. 기존 행은 기본값으로 채운 뒤
+        # seed 시점의 condition_text를 보고 alerts.py가 backfill한다.
+        rule_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(alert_rules)"))}
+        for col, ddl in [
+            ("kind", "VARCHAR(20) DEFAULT 'count_window'"),
+            ("threshold_count", "INTEGER DEFAULT 10"),
+            ("window_minutes", "INTEGER DEFAULT 60"),
+            ("night_start_hour", "INTEGER DEFAULT 22"),
+            ("night_end_hour", "INTEGER DEFAULT 6"),
+            ("cooldown_minutes", "INTEGER DEFAULT 30"),
+        ]:
+            if col not in rule_cols:
+                conn.execute(text(f"ALTER TABLE alert_rules ADD COLUMN {col} {ddl}"))
+
 
 def get_db():
     db: Session = SessionLocal()

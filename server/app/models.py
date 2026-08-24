@@ -55,9 +55,18 @@ class Alert(Base):
 
 
 class AlertRule(Base):
-    """S4 알림 규칙 카드 — 조건 문구는 표시용, 평가 파라미터는 count/window로 저장."""
+    """S4 알림 규칙 카드.
+
+    condition_text는 화면 표시용 문구이고, 실제 평가는 kind/threshold_count/
+    window_minutes로 한다. 문구를 파싱해서 판단하면 사용자가 문구를 고치는 순간
+    동작이 바뀌어버리므로 분리해 둔다.
+    """
 
     __tablename__ = "alert_rules"
+
+    KIND_COUNT = "count_window"    # 지정 시간 안에 N회 이상
+    KIND_NIGHT = "night_window"    # 야간 시간대에 한해 N회 이상
+    KIND_UNKNOWN = "unknown"       # 미등록 화자의 기침이 발생하면 즉시
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(50))            # 예: "이상 징후"
@@ -66,6 +75,14 @@ class AlertRule(Base):
     channels_text: Mapped[str] = mapped_column(String(100), default="보호자 웹훅 · 관리자 웹훅")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    # --- 평가 파라미터 ---
+    kind: Mapped[str] = mapped_column(String(20), default=KIND_COUNT)
+    threshold_count: Mapped[int] = mapped_column(Integer, default=10)
+    window_minutes: Mapped[int] = mapped_column(Integer, default=60)
+    night_start_hour: Mapped[int] = mapped_column(Integer, default=22)   # 현지 시각 기준
+    night_end_hour: Mapped[int] = mapped_column(Integer, default=6)
+    cooldown_minutes: Mapped[int] = mapped_column(Integer, default=30)   # 재알림 억제
 
 
 class User(Base):

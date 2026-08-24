@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..core.alert_engine import engine as alert_engine
 from ..db import get_db
 from ..ml.cough_gate import gate
 from ..ml.identifier import identifier
@@ -78,9 +79,11 @@ async def create_event(
     db.add(event)
     db.commit()
     db.refresh(event)
-    # P5에서 여기에 AlertEngine.evaluate() + WebSocket 브로드캐스트 추가
+
+    alerts = alert_engine.evaluate(db, event)   # P5 — 규칙 평가 (FR-07)
     return {"id": event.id, "person_id": event.person_id,
-            "similarity": event.similarity, "cough_score": cough_score}
+            "similarity": event.similarity, "cough_score": cough_score,
+            "alerts": [{"rule": a.rule, "message": a.message} for a in alerts]}
 
 
 @router.get(
