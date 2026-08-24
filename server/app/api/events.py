@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -53,7 +54,10 @@ async def create_event(
 
     # 1차 게이트 — 기침이 아니면 화자 식별로 넘기지 않는다.
     # 엣지 검출기는 에너지만 보므로 박수·문 닫기·말소리가 여기까지 올라온다.
-    is_cough, cough_score = gate.check(str(wav_path))
+    # 게이트와 식별은 동기 CPU 작업(torch)이다. async 핸들러 안에서 그대로 호출하면
+    # 이벤트 루프가 막혀 처리 중에는 서버 전체가 멈춘다 — 실제로 기침 한 건을
+    # 처리하는 동안 대시보드 로그인이 타임아웃됐다(2026-08-24). 스레드풀로 넘긴다.
+    is_cough, cough_score = await run_in_threadpool(gate.check, str(wav_path))
     if not is_cough:
         wav_path.unlink(missing_ok=True)
         response.status_code = 200
@@ -63,7 +67,7 @@ async def create_event(
     # 등록 임베딩이 있는 화자만 후보로 넘긴다 (P3 — 스텁 교체)
     registry = [(p.id, p.embedding_ref)
                 for p in db.scalars(select(Person)).all() if p.embedding_ref]
-    result = identifier.identify(str(wav_path), registry)
+    result = await run_in_threadpool(identifier.identify, str(wav_path), registry)
 
     captured = datetime.fromisoformat(m["captured_at"])
     if captured.tzinfo is not None:
