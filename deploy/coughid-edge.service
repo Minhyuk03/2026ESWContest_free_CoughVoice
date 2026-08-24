@@ -1,0 +1,34 @@
+# 라즈베리파이 엣지 상주 서비스
+#
+# 설치:
+#   sudo cp coughid-edge.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now coughid-edge
+#
+# 확인:  systemctl status coughid-edge · journalctl -u coughid-edge -f
+#
+# 서버 주소는 IP가 아니라 mDNS 이름을 쓴다. 공유기가 IP를 바꿔도 끊기지 않는다.
+# 네트워크가 늦게 붙는 부팅 직후를 대비해 network-online.target을 기다린다.
+[Unit]
+Description=Cough-ID edge (capture -> detect -> send)
+After=network-online.target sound.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mh
+WorkingDirectory=/home/mh/Cough_EmbeddedSystem/edge
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/mh/Cough_EmbeddedSystem/monitor/.venv/bin/python main.py \
+    --server http://mhui-Macmini.local:8000 \
+    --device 0 \
+    --gain 5 \
+    --threshold 0.10
+Restart=always
+RestartSec=5
+# 마이크를 다른 프로세스가 잡고 있으면 실패하므로 재시도 간격을 둔다
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Install]
+WantedBy=multi-user.target
