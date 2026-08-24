@@ -65,6 +65,39 @@ def crop_active(x: np.ndarray, rate: int,
     return x[start:start + n_crop]
 
 
+def crop_peaks(x: np.ndarray, rate: int, n_crops: int = 3,
+               crop_s: float = CROP_S, pre_roll_s: float = PRE_ROLL_S) -> list[np.ndarray]:
+    """에너지 피크를 겹치지 않게 n_crops개까지 찾아 각각 잘라낸다.
+
+    한 녹음에 기침이 여러 번 들어 있는 경우(Coswara는 3~7.5초에 연속 기침이 흔하다)
+    피크 하나만 쓰면 화자당 샘플이 너무 적어 거리 학습이 되지 않는다. 피크를 뽑을
+    때마다 그 구간을 0으로 지워 다음 피크가 같은 기침을 다시 집지 않게 한다.
+
+    소리가 한 번뿐이거나 녹음이 짧으면 찾은 개수만 반환한다 — 무음을 억지로
+    채우면 그게 학습 신호를 오염시킨다.
+    """
+    n_crop = int(rate * crop_s)
+    if len(x) <= n_crop:
+        return [x]
+
+    win = max(1, int(rate * ENERGY_WIN_S))
+    energy = np.convolve(x.astype(np.float64) ** 2, np.ones(win), mode="same")
+    work = energy.copy()
+    first_peak = float(work.max()) + 1e-20
+    out = []
+    for _ in range(n_crops):
+        peak_i = int(work.argmax())
+        # 첫 피크 대비 상대 크기로 판단한다. 전체 에너지와 비교하면 첫 기침이
+        # 대부분을 차지해 두 번째부터 항상 걸러진다(2026-08-24 실제로 겪음).
+        if out and float(work[peak_i]) / first_peak < 0.02:
+            break
+        start = max(0, peak_i - int(rate * pre_roll_s))
+        start = min(start, len(x) - n_crop)
+        out.append(x[start:start + n_crop])
+        work[start:start + n_crop] = 0.0     # 같은 기침을 다시 집지 않도록 소거
+    return out or [x[:n_crop]]
+
+
 def normalize_rms(x: np.ndarray, target_rms: float = TARGET_RMS) -> np.ndarray:
     """RMS를 목표값으로 맞춘다. 클리핑이 나면 피크 기준으로 되돌린다."""
     rms = float(np.sqrt(np.mean(x.astype(np.float64) ** 2)))

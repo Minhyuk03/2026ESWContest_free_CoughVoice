@@ -44,7 +44,14 @@ def summarize(name, sims):
 
 
 def evaluate(rows, enroll_ses, test_ses, prep, verbose=True):
-    """등록 세션으로 registry를 만들고 검증 세션 전체를 매칭한다.
+    """등록 세션으로 registry를 만들고, 등록에 쓰이지 않은 모든 기침을 시험한다.
+
+    트라이얼 구성 원칙:
+      - 등록 화자는 `s`로 시작하는 ID만. **`x`(외부인)는 절대 등록하지 않는다** —
+        미등록자를 unknown으로 거르는지 보려면 registry 밖에 있어야 한다.
+      - 등록에 사용한 (화자, 세션) 조합은 시험에서 제외한다. 같은 녹음을 등록과
+        검증에 함께 쓰면 그날의 마이크 위치를 외운 것이 정확도로 둔갑한다.
+      - 등록 화자의 다른 세션 = genuine, 미등록 화자 = impostor.
 
     등록·검증 양쪽에 동일한 prep을 적용한다 — 전처리가 어긋나면 유사도가 무의미해진다.
     """
@@ -52,7 +59,7 @@ def evaluate(rows, enroll_ses, test_ses, prep, verbose=True):
 
     enroll = defaultdict(list)
     for r in rows:
-        if r["speaker"] != NEG_SPEAKER and int(r["session"]) == enroll_ses:
+        if r["speaker"].startswith("s") and int(r["session"]) == enroll_ses:
             enroll[r["speaker"]].append(r["path"])
     if not enroll:
         sys.exit(f"세션 {enroll_ses}에 등록용 기침 샘플이 없습니다.")
@@ -65,25 +72,32 @@ def evaluate(rows, enroll_ses, test_ses, prep, verbose=True):
         if verbose:
             print(f"  등록: {name} → id={speaker_ids[name]}, 샘플 {n}개")
 
+    outsiders = sorted({r["speaker"] for r in rows
+                        if r["speaker"] not in speaker_ids and r["speaker"] != NEG_SPEAKER})
+    if verbose:
+        print(f"  미등록(외부인): {', '.join(outsiders) if outsiders else '없음'}")
+
     genuine, impostor = [], []
     by_type = defaultdict(list)
     trials = []
     for r in rows:
-        if int(r["session"]) != test_ses:
-            continue
+        if r["speaker"] == NEG_SPEAKER:
+            continue                        # 기침이 아니므로 화자 판정 대상이 아니다
+        enrolled = r["speaker"] in speaker_ids
+        if enrolled and int(r["session"]) == enroll_ses:
+            continue                        # 등록에 쓴 녹음은 시험하지 않는다
+
         emb = ident.embed(r["path"], **prep)
         res = ident.match(emb, registry)
         sim = res.similarity if res.similarity is not None else -1.0
         best_id = _argmax_id(emb, registry)
         best_name = next((n for n, i in speaker_ids.items() if i == best_id), None)
-        trials.append((r, sim, best_name))
-        if r["speaker"] == NEG_SPEAKER:
-            continue                       # 기침이 아니므로 화자 판정 대상에서 제외
-        if r["speaker"] in speaker_ids:
+        trials.append((r, sim, best_name, enrolled))
+        if enrolled:
             genuine.append(sim)
             by_type[r["type"]].append(sim)
         else:
-            impostor.append(sim)           # 등록되지 않은 화자 = unknown이어야 정답
+            impostor.append(sim)            # 미등록 화자 = unknown이 정답
     return genuine, impostor, by_type, trials, speaker_ids, ident, registry
 
 

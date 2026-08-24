@@ -8,10 +8,18 @@
 데이터라 그 수치조차 낙관적이다. 그래서 AudioSet 527클래스로 사전학습된 PANNs(CNN14)를
 고정 판정기로 쓴다 — 수천 개의 실제 기침으로 학습돼 있어 우리 녹음 환경에 과적합되지 않는다.
 
-2026-08-20 실측 (기침 30 / 비기침 20):
-    임계치 0.005 → 기침 검출률 97%, 비기침 오탐률 0%
-    비기침 최고 0.0026, 헛기침 최저 0.0101 — 그 사이를 잡은 값이다.
-    다만 네거티브가 한 방에서 녹음한 20개뿐이라 0%는 낙관적인 수치다. 표본을 늘려 재확인할 것.
+2026-08-20 1차 (기침 30 / 비기침 20, 조용한 방): 임계치 0.005에서 오탐률 0%.
+2026-08-24 재측정 — **그 0.005는 과소평가였다.** TV를 켠 거실 20분 연속 녹음에서
+    시간당 오탐이 201회 나왔다. 조용한 방 네거티브 20개(최고 0.0026)로 잡은 값이라
+    실제 생활소음이 그 선을 넘나든 것이다. 3초 통제 샘플로 정한 임계치를 연속 운용에
+    그대로 쓰면 안 된다는 사례다.
+
+    연속 녹음 기준 운용 곡선 (기침 검출률은 우리 기침 60개 기준):
+        0.005 → 201회/시간, 98%      0.010 → 24회/시간, 98%
+        0.020 →  12회/시간, 97%      0.050 →  9회/시간, 97%
+        0.200 →   6회/시간, 92%      0.300 →  6회/시간, 90%
+    0.05를 택했다. 0.005 대비 오탐이 22배 줄고 검출률은 1%p만 손해다.
+    참고: Hyfe(상용, 손목 착용) 시간당 1.03회. 우리는 방에 둔 마이크라 조건이 다르다.
 """
 from __future__ import annotations
 
@@ -32,11 +40,12 @@ import torchaudio
 from .features import read_wav
 
 PANNS_RATE = 32000        # PANNs 입력 규격
+MIN_SAMPLES = PANNS_RATE  # 1초. CNN14의 풀링 단계를 통과하려면 최소 길이가 필요하다
 COUGH_CLASS = 47          # AudioSet "Cough"
 THROAT_CLASS = 48         # AudioSet "Throat clearing" — 헛기침도 수집 대상이므로 함께 센다
 
 # 임계치 근거는 위 모듈 docstring 참조. 감으로 정한 값이 아니다.
-DEFAULT_COUGH_THRESHOLD = float(os.environ.get("COUGHID_COUGH_THRESHOLD", "0.005"))
+DEFAULT_COUGH_THRESHOLD = float(os.environ.get("COUGHID_COUGH_THRESHOLD", "0.05"))
 
 PANNS_DIR = os.path.join(os.path.expanduser("~"), "panns_data")
 LABELS_CSV = os.path.join(PANNS_DIR, "class_labels_indices.csv")
@@ -74,9 +83,16 @@ class CoughGate:
         """Cough + Throat clearing 확률의 합. 크롭하지 않은 원본 전체를 넣는다."""
         tagger = self._ensure_tagger()
         x, rate = read_wav(wav_path)
+        if len(x) == 0:
+            return 0.0
         t = torch.from_numpy(np.ascontiguousarray(x)).unsqueeze(0)
         if rate != PANNS_RATE:
             t = torchaudio.functional.resample(t, rate, PANNS_RATE)
+        # 엣지 검출기는 링버퍼 상황에 따라 2.5초보다 짧은 클립을 보낼 수 있다.
+        # 그대로 넣으면 CNN14가 "output size is too small"로 죽어 /events가 500을 낸다
+        # (2026-08-24 장시간 녹음 평가에서 실제 발생).
+        if t.shape[-1] < MIN_SAMPLES:
+            t = torch.nn.functional.pad(t, (0, MIN_SAMPLES - t.shape[-1]))
         with torch.no_grad():
             clipwise, _ = tagger.inference(t.numpy())
         p = clipwise[0]

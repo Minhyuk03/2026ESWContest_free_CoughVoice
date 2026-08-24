@@ -12,3 +12,6 @@ server/audio_store/
 cough_data/
 *.wav
 !edge/test_cough.wav
+
+# 외부 데이터셋 (재배포하지 않음)
+datasets/
