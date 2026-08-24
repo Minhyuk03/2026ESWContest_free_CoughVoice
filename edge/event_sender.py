@@ -44,6 +44,9 @@ class EventSender:
     def send(self, wav_bytes: bytes, peak_rms: float) -> None:
         """오디오 콜백에서 호출된다 — 절대 블로킹하지 않는다."""
         meta = {
+            # 재전송 큐가 같은 클립을 다시 보낼 수 있으므로 이벤트마다 고유 ID를 붙인다.
+            # 서버는 같은 ID를 다시 받으면 새 이벤트를 만들지 않는다(멱등성).
+            "event_id": uuid.uuid4().hex,
             "device_id": self.device_id,
             "captured_at": datetime.now(timezone.utc).isoformat(),
             "peak_rms": round(peak_rms, 4),

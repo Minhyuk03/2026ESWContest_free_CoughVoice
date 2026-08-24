@@ -6,6 +6,14 @@
   - 이벤트 길이가 기침 범위(0.1~1.5초)면 전후 여유 포함 2.5초 구간을 링버퍼에서 절단
   - on_cough(wav_bytes, peak_rms) 콜백 호출 → EventSender가 서버 전송
 
+쿨다운을 2초로 둔 이유: 기침 직후의 들숨과 잔향이 임계치를 다시 넘어 **한 번의 기침이
+두 건으로 기록**된다. 3초 클립 70개로 측정한 결과 쿨다운 1초에서 41%(29/70)가 중복
+트리거였고 클립당 평균 1.47회였다. 알림 규칙이 이벤트 개수를 세므로 "1시간 10회"가
+실제로는 7번쯤에 발동했다. 2초로 올리면 14%(10/70)로 줄어든다.
+
+대가: 2초보다 빠른 연속 기침은 하나로 셈된다. 기침 발작처럼 몰아서 하는 경우
+과소 계수되므로, 빈도를 절대값으로 해석하지 말 것.
+
 2차 CNN(YAMNet/tflite) 판정은 classify() 자리에 끼워 넣도록 구조를 잡아둠(P4 후반).
 """
 from __future__ import annotations
@@ -27,7 +35,7 @@ class CoughDetector:
         min_dur: float = 0.08,         # 기침 최소 길이(초)
         max_dur: float = 1.5,          # 이보다 길면 말소리/소음으로 간주
         clip_seconds: float = 2.5,     # 서버로 보낼 절단 길이
-        cooldown: float = 1.0,         # 연속 트리거 방지
+        cooldown: float = 2.0,         # 연속 트리거 방지 (아래 주석 참조)
     ):
         self.capture = capture
         self.rms_threshold = rms_threshold

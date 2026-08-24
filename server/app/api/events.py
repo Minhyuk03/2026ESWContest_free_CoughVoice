@@ -49,6 +49,18 @@ async def create_event(
     db: Session = Depends(get_db),
 ):
     m = json.loads(meta)
+
+    # 같은 이벤트를 이미 받았으면 다시 처리하지 않는다. 엣지의 재전송 큐가 네트워크
+    # 복구 후 같은 클립을 다시 보낼 수 있는데, 그대로 저장하면 기침 횟수가 부풀려지고
+    # 알림 규칙이 실제보다 일찍 발동한다.
+    event_id = m.get("event_id")
+    if event_id:
+        dup = db.scalar(select(CoughEvent).where(CoughEvent.event_id == event_id))
+        if dup is not None:
+            response.status_code = 200
+            return {"id": dup.id, "person_id": dup.person_id,
+                    "similarity": dup.similarity, "duplicate": True, "alerts": []}
+
     wav_path = AUDIO_DIR / f"{uuid.uuid4().hex}.wav"
     wav_path.write_bytes(await audio.read())
 
@@ -73,6 +85,7 @@ async def create_event(
     if captured.tzinfo is not None:
         captured = captured.astimezone(timezone.utc)  # DB에는 UTC 기준으로 통일 저장
     event = CoughEvent(
+        event_id=event_id,
         device_id=m.get("device_id", "unknown"),
         captured_at=captured,
         person_id=result.person_id,

@@ -37,6 +37,13 @@ def _migrate() -> None:
 
         # P5 — 알림 규칙 평가 파라미터. 기존 행은 기본값으로 채운 뒤
         # seed 시점의 condition_text를 보고 alerts.py가 backfill한다.
+        ev_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(cough_events)"))}
+        if "event_id" not in ev_cols:
+            conn.execute(text("ALTER TABLE cough_events ADD COLUMN event_id VARCHAR(40)"))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_cough_events_event_id "
+                "ON cough_events (event_id)"))
+
         rule_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(alert_rules)"))}
         for col, ddl in [
             ("kind", "VARCHAR(20) DEFAULT 'count_window'"),

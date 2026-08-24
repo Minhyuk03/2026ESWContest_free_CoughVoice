@@ -33,6 +33,9 @@ class CoughEvent(Base):
     __tablename__ = "cough_events"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # 엣지가 부여하는 고유 ID. 재전송 큐가 같은 클립을 다시 보내도 중복 저장되지 않는다.
+    # 구버전 엣지는 보내지 않으므로 nullable.
+    event_id: Mapped[Optional[str]] = mapped_column(String(40), nullable=True, index=True)
     device_id: Mapped[str] = mapped_column(String(50))
     captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
