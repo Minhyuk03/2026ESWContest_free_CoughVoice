@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -80,6 +81,50 @@ def update_person(person_id: int, body: PersonBody, db: Session = Depends(get_db
     return _person_row(db, p)
 
 
+class EnrollFromEventsBody(BaseModel):
+    event_ids: List[int]
+
+
+@router.post("/{person_id}/enroll-from-events",
+             summary="이미 수신된 기침 이벤트로 등록 (S3a)",
+             description="장치가 보내 저장해 둔 기침 오디오를 골라 평균 임베딩을 만든다. "
+                         "등록과 식별이 같은 캡처 경로를 타므로 파일을 따로 옮길 필요가 없고, "
+                         "마이크·샘플레이트가 달라 생기는 불일치도 없다.")
+async def enroll_from_events(person_id: int, body: EnrollFromEventsBody,
+                             db: Session = Depends(get_db)):
+    p = db.get(Person, person_id)
+    if p is None:
+        raise HTTPException(status_code=404, detail="화자를 찾을 수 없습니다")
+    if len(body.event_ids) < MIN_ENROLL_SAMPLES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"등록에는 최소 {MIN_ENROLL_SAMPLES}개 샘플이 필요합니다")
+
+    paths = []
+    for eid in body.event_ids:
+        e = db.get(CoughEvent, eid)
+        if e is None or not e.audio_path or not Path(e.audio_path).exists():
+            raise HTTPException(status_code=404, detail=f"이벤트 {eid}의 오디오가 없습니다")
+        paths.append(e.audio_path)
+
+    try:
+        blob, n = await run_in_threadpool(identifier.enroll, paths)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"임베딩 생성 실패: {exc}")
+
+    p.embedding_ref = blob
+    p.sample_count = n
+    db.commit()
+
+    # 등록에 쓴 이벤트는 본인 것으로 확정된 셈이니 화자를 붙여 둔다.
+    for eid in body.event_ids:
+        ev = db.get(CoughEvent, eid)
+        if ev is not None:
+            ev.person_id = person_id
+    db.commit()
+    return _person_row(db, p)
+
+
 @router.post("/{person_id}/samples", summary="등록용 샘플 업로드 (S3a 마법사)",
              description="기침 샘플 WAV 여러 개를 받아 평균 임베딩을 만들어 저장한다. "
                          "원본 음성은 저장하지 않고 임시 파일로만 쓰고 지운다(NFR-06).")
@@ -102,7 +147,7 @@ async def upload_samples(person_id: int,
             q.write_bytes(await f.read())
             paths.append(str(q))
         try:
-            blob, n = identifier.enroll(paths)
+            blob, n = await run_in_threadpool(identifier.enroll, paths)
         except Exception as exc:   # 포맷 오류·모델 로딩 실패를 400으로 되돌린다
             raise HTTPException(status_code=400, detail=f"임베딩 생성 실패: {exc}")
     finally:
