@@ -24,15 +24,21 @@ MODEL_DIR = os.environ.get(
 EMBED_DIM = 192
 
 # 임계치 0.40 — 2026-08-24 측정 근거 (Coswara 투영층 적용 기준):
-#   동일인 30건(s01 ses02 20 + x01 10) vs 타인 20건(s02). EER 15.8%.
-#     0.30 → 재현율 83% / FAR 15% / 정밀도 89%
-#     0.35 → 재현율 80% / FAR  5% / 정밀도 96%
-#     0.40 → 재현율 70% / FAR  0% / 정밀도 100%   ← 채택
+#   동일인 30건(s01 ses02 20 + x01 10) vs 타인 30건(s02 친구 20 + s03 동생 10).
+#   EER 16.7%. 타인이 1명일 때 15.8%였으므로 표본을 늘려도 유지된다.
+#     0.30 → 재현율 83% / FAR 20% / 정밀도 81%
+#     0.35 → 재현율 80% / FAR 13% / 정밀도 86%
+#     0.40 → 재현율 70% / FAR  7% / 정밀도 91%   ← 채택
+#     0.50 → 재현율 30% / FAR  0% / 정밀도 100%
 #   "확신할 때만 이름을 붙이고 나머지는 unknown"이 이 시스템에 맞는 동작이라
 #   정밀도를 우선했다. 잘못된 이름은 이력을 오염시키지만 unknown은 그렇지 않다.
+#   0.50은 정밀도 100%지만 재현율 30%라 대부분이 unknown이 되어 쓸모가 줄어든다.
 #
-#   주의: 타인 표본이 s02 한 명(20건)뿐이다. FAR 0%의 95% 신뢰 상한은 약 15%다.
-#   화자를 늘려 재확인할 것. 투영층 없이 원본 임베딩만 쓰면 EER 34.2%로 떨어진다.
+#   **형제자매가 가장 어려운 조건이다.** 임계치 0.40에서 친구(s02) FAR 0%인데
+#   동생(s03)은 20%다. 우리 페르소나가 전부 가족(아기·부모, 노부부)이므로
+#   실사용 조건이 곧 최악 조건이라는 뜻이다.
+#
+#   투영층 없이 원본 임베딩만 쓰면 EER 34.2%로 떨어진다.
 DEFAULT_THRESHOLD = float(os.environ.get("COUGHID_THRESHOLD", "0.40"))
 
 
@@ -79,7 +85,11 @@ class SpeakerIdentifier:
         wav = preprocess(wav_path, **prep)
         with torch.no_grad():
             emb = model.encode_batch(wav).squeeze().cpu().numpy()
-        return _l2_normalize(projection.apply(emb) if project else emb)
+        # 투영층은 **L2 정규화된** 임베딩으로 학습됐다(train_cough_projection.py의
+        # embed_crops가 정규화 후 저장하고, mu도 그 분포에서 뽑았다). 정규화 전
+        # 원본을 넣으면 스케일이 어긋나 투영이 무의미해진다.
+        emb = _l2_normalize(emb)
+        return _l2_normalize(projection.apply(emb)) if project else emb
 
     def enroll(self, wav_paths: Iterable[str], **prep) -> tuple[bytes, int]:
         """등록 샘플들의 평균 임베딩을 반환한다 → Person.embedding_ref, sample_count.

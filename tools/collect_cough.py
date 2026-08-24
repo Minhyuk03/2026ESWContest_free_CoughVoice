@@ -122,6 +122,21 @@ def main():
                          "type", "index", "peak", "rms", "peak_ratio",
                          "duration_s", "rate", "recorded_at"])
 
+    # 같은 조합(speaker/session/distance/type)으로 다시 실행하면 인덱스가 001부터
+    # 시작해 기존 WAV를 덮어쓰고 metadata.csv에는 중복 행만 남는 사고가 세 번 있었다.
+    # 이미 있는 파일 다음 번호부터 매긴다.
+    prefix = f"{args.speaker}_ses{args.session:02d}_{args.distance}cm_{args.type}_"
+    existing = [f for f in os.listdir(wav_dir)
+                if f.startswith(prefix) and f.endswith(".wav")]
+    start_index = 0
+    for f in existing:
+        try:
+            start_index = max(start_index, int(f[len(prefix):-4]))
+        except ValueError:
+            pass
+    if start_index:
+        print(f"기존 파일 {len(existing)}개 발견 — {start_index + 1}번부터 이어서 저장합니다.\n")
+
     saved = 0
     idx = 0
     try:
@@ -143,13 +158,12 @@ def main():
                 continue
 
             saved += 1
-            fname = (f"{args.speaker}_ses{args.session:02d}"
-                     f"_{args.distance}cm_{args.type}_{saved:03d}.wav")
+            fname = f"{prefix}{start_index + saved:03d}.wav"
             fpath = os.path.join(wav_dir, fname)
             save_wav(fpath, mono)
 
             writer.writerow([fname, args.speaker, args.session, args.distance,
-                             args.type, saved, peak, round(rms, 1),
+                             args.type, start_index + saved, peak, round(rms, 1),
                              round(ratio, 5), args.duration, RATE,
                              dt.datetime.now().isoformat(timespec="seconds")])
             meta_file.flush()
