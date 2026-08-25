@@ -85,11 +85,42 @@ class EnrollFromEventsBody(BaseModel):
     event_ids: List[int]
 
 
+def _enrollment_report(events: List[CoughEvent]) -> dict:
+    """등록 세트가 어떤 것들로 이뤄졌는지 요약한다.
+
+    등록 품질은 나중에 되짚기가 어렵다 — 임베딩 평균만 남고 어떤 샘플로 만들었는지는
+    사라지기 때문이다(2026-08-25에 화자 2명의 등록 구성을 알아내려고 이벤트 시각을
+    역추적해야 했다). 등록 시점에 요약을 돌려주고 화면이 보여 주게 한다.
+
+    수치를 판정에 쓰지는 않는다. 어떤 등록 구성이 잘 되는지는 아직 모른다 —
+    같은 날 실측에서 5개·5분 단일 세션 등록(10/10 정답)이 17개·16시간 분산 등록
+    (11/20 정답)보다 나았다. 표본이 작아 결론을 낼 수 없으므로 기록만 남긴다.
+    """
+    times = sorted(_as_utc_dt(e.captured_at) for e in events)
+    scores = [e.cough_score for e in events if e.cough_score is not None]
+    span_min = (times[-1] - times[0]).total_seconds() / 60 if len(times) > 1 else 0.0
+    return {
+        "sample_count": len(events),
+        "time_span_minutes": round(span_min, 1),
+        "first_sample_at": _iso_utc(times[0]) if times else None,
+        "last_sample_at": _iso_utc(times[-1]) if times else None,
+        "distinct_days": len({t.date() for t in times}),
+        "gate_score_mean": round(sum(scores) / len(scores), 4) if scores else None,
+        "gate_score_min": round(min(scores), 4) if scores else None,
+        "scored_samples": len(scores),
+    }
+
+
+def _as_utc_dt(dt: datetime) -> datetime:
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+
+
 @router.post("/{person_id}/enroll-from-events",
-             summary="이미 수신된 기침 이벤트로 등록 (S3a)",
+             summary="이미 수신된 기침 이벤트로 등록 (S3a) — 권장 경로",
              description="장치가 보내 저장해 둔 기침 오디오를 골라 평균 임베딩을 만든다. "
                          "등록과 식별이 같은 캡처 경로를 타므로 파일을 따로 옮길 필요가 없고, "
-                         "마이크·샘플레이트가 달라 생기는 불일치도 없다.")
+                         "마이크·샘플레이트가 달라 생기는 불일치도 없다. "
+                         "**업로드 방식(/samples) 대신 이 경로를 써야 한다** — 근거는 그쪽 설명 참조.")
 async def enroll_from_events(person_id: int, body: EnrollFromEventsBody,
                              db: Session = Depends(get_db)):
     p = db.get(Person, person_id)
@@ -117,16 +148,27 @@ async def enroll_from_events(person_id: int, body: EnrollFromEventsBody,
     db.commit()
 
     # 등록에 쓴 이벤트는 본인 것으로 확정된 셈이니 화자를 붙여 둔다.
+    used = []
     for eid in body.event_ids:
         ev = db.get(CoughEvent, eid)
         if ev is not None:
             ev.person_id = person_id
+            used.append(ev)
     db.commit()
-    return _person_row(db, p)
+
+    row = _person_row(db, p)
+    row["enrollment"] = _enrollment_report(used)
+    return row
 
 
-@router.post("/{person_id}/samples", summary="등록용 샘플 업로드 (S3a 마법사)",
-             description="기침 샘플 WAV 여러 개를 받아 평균 임베딩을 만들어 저장한다. "
+@router.post("/{person_id}/samples", summary="등록용 샘플 업로드 (권장하지 않음)",
+             deprecated=True,
+             description="⚠ **권장하지 않는다. /enroll-from-events를 쓸 것.** "
+                         "외부에서 녹음한 파일로 등록하면 식별이 뒤집힐 수 있다 "
+                         "(2026-08-25 실측: 같은 검증 세트에서 동일인 0.419 / 타인 0.636으로 "
+                         "타인이 더 높게 나왔다. 같은 세트를 엣지 클립으로 등록하면 "
+                         "동일인 0.504 / 타인 0.364로 정상). "
+                         "임베딩이 화자보다 녹음 경로를 크게 반영하기 때문이다. "
                          "원본 음성은 저장하지 않고 임시 파일로만 쓰고 지운다(NFR-06).")
 async def upload_samples(person_id: int,
                          files: List[UploadFile] = File(...),
@@ -156,7 +198,14 @@ async def upload_samples(person_id: int,
     p.embedding_ref = blob
     p.sample_count = n
     db.commit()
-    return _person_row(db, p)
+
+    # 호출자가 OpenAPI 설명을 안 읽었을 수 있으므로 응답에도 남긴다.
+    row = _person_row(db, p)
+    row["warning"] = (
+        "업로드한 파일로 등록했습니다. 엣지 장치가 녹음한 클립과 특성이 달라 "
+        "식별 정확도가 크게 떨어지거나 뒤집힐 수 있습니다. "
+        "/persons/{id}/enroll-from-events 로 다시 등록하는 것을 권합니다.")
+    return row
 
 
 @router.delete("/{person_id}", summary="화자 삭제")

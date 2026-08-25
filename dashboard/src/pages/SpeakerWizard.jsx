@@ -80,6 +80,21 @@ export default function SpeakerWizard() {
     }
   }
 
+  // 고른 샘플이 어떤 구성인지 확인 단계에서 보여 준다. 등록이 끝나면 어떤 샘플로
+  // 만들었는지 알 방법이 없어서(임베딩 평균만 남는다) 지금 보여 주는 편이 낫다.
+  const summary = (() => {
+    const sel = events.filter((e) => picked.includes(e.id))
+    if (sel.length === 0) return ''
+    const ts = sel.map((e) => new Date(e.captured_at).getTime()).sort((a, b) => a - b)
+    const spanMin = Math.round((ts[ts.length - 1] - ts[0]) / 60000)
+    const scored = sel.filter((e) => e.cough_score != null)
+    const mean = scored.length
+      ? (scored.reduce((a, e) => a + e.cough_score, 0) / scored.length).toFixed(2)
+      : null
+    const span = spanMin >= 60 ? `${Math.round(spanMin / 60)}시간` : `${spanMin}분`
+    return `${span}에 걸침${mean ? ` · 평균 기침 확신도 ${mean}` : ''}`
+  })()
+
   const canNext =
     (step === 0 && alias.trim().length > 0) ||
     (step === 1 && picked.length >= MIN_SAMPLES) ||
@@ -112,7 +127,8 @@ export default function SpeakerWizard() {
               <h3>이 사람의 기침을 {MIN_SAMPLES}개 이상 고르세요</h3>
               <p className="muted">
                 장치 앞에서 기침하면 아래 목록에 나타납니다. 재생해서 확인한 뒤 선택하세요.
-                샘플이 많을수록 정확도가 올라갑니다.
+                <b>반드시 이 장치가 녹음한 기침으로 등록해야 합니다</b> — 다른 기기로 녹음한
+                파일을 쓰면 식별이 뒤집힐 수 있습니다. 기침 확신도가 높은 것을 고르세요.
               </p>
               <div className="page-head">
                 <p>선택: <b>{picked.length}</b> / 최소 {MIN_SAMPLES}</p>
@@ -133,6 +149,9 @@ export default function SpeakerWizard() {
                       <p className="muted small">
                         현재 판정: {e.person_alias || '미등록'}
                         {e.similarity != null && ` (유사도 ${e.similarity})`}
+                        {/* 게이트 점수 = "이게 기침인가" 확신도. 낮은 클립은 기침이 약하거나
+                            잡음이 섞인 것이라 등록 샘플로는 피하는 편이 낫다. */}
+                        {e.cough_score != null && ` · 기침 확신도 ${e.cough_score.toFixed(2)}`}
                       </p>
                     </div>
                     <button type="button" onClick={(ev) => { ev.preventDefault(); play(e.id) }}>
@@ -151,7 +170,7 @@ export default function SpeakerWizard() {
             <div className="wizard-body">
               <h3>확인 및 완료</h3>
               <p>별칭: <b>{alias}</b>{room ? ` · 호실: ${room}` : ''}</p>
-              <p>등록 샘플: <b>{picked.length}개</b></p>
+              <p>등록 샘플: <b>{picked.length}개</b>{summary && ` · ${summary}`}</p>
               <p className="muted">
                 완료를 누르면 선택한 기침으로 화자 지문을 만들어 {reenrollId ? '갱신' : '등록'}합니다.
                 원본 음성은 이미 서버에 있는 이벤트 오디오를 그대로 사용합니다.
