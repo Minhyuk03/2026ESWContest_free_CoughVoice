@@ -337,8 +337,45 @@
 
 .trend-chart {
   width: 100%;
-  height: 180px;
+  height: auto;
+  aspect-ratio: 600 / 200;
   display: block;
+}
+
+/* 화자별 라인 범례 */
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin-top: 10px;
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.legend-item b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.legend-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  flex: 0 0 auto;
+  display: inline-block;
+}
+
+/* 이력 표의 화자 셀에 색 점을 함께 보여 차트와 매칭 */
+.speaker-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .table-card { padding: 0; overflow-x: auto; }
