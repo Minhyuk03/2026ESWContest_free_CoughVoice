@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -66,6 +67,27 @@ def health():
 # **이 블록은 모든 API 라우터 등록 뒤에 와야 한다.** catch-all이 먼저 잡히면
 # API 요청이 index.html로 응답된다.
 DIST = Path(__file__).resolve().parents[2] / "dashboard" / "dist"
+DIST_RESOLVED = DIST.resolve()
+
+
+def _safe_static(full_path: str) -> Optional[Path]:
+    """DIST 안의 실제 파일이면 그 경로를, 아니면 None을 돌려준다.
+
+    Starlette는 URL을 디코드해서 넘기므로 `%2e%2e%2f`(../)가 그대로 들어온다.
+    `DIST / full_path`를 그대로 쓰면 DIST 밖 파일(예: server/cough_id.db — 비밀번호
+    해시가 든 DB)까지 서빙돼 경로 순회로 임의 파일이 유출된다. resolve() 후
+    DIST 하위인지 반드시 검증한다.
+    """
+    if not full_path:
+        return None
+    try:
+        candidate = (DIST / full_path).resolve()
+    except (OSError, RuntimeError, ValueError):
+        return None
+    if candidate == DIST_RESOLVED or DIST_RESOLVED not in candidate.parents:
+        return None                              # DIST 밖 → 거부
+    return candidate if candidate.is_file() else None
+
 
 if DIST.is_dir():
     app.mount("/assets", StaticFiles(directory=DIST / "assets"), name="assets")
@@ -73,9 +95,9 @@ if DIST.is_dir():
     @app.get("/{full_path:path}", include_in_schema=False)
     def spa_fallback(full_path: str):
         """React Router가 클라이언트에서 경로를 처리하므로 없는 경로는 index.html로 넘긴다."""
-        candidate = DIST / full_path
-        if full_path and candidate.is_file():
-            return FileResponse(candidate)          # favicon 등 루트 정적 파일
+        static = _safe_static(full_path)
+        if static is not None:
+            return FileResponse(static)             # favicon 등 루트 정적 파일
         index = DIST / "index.html"
         if not index.is_file():
             raise HTTPException(status_code=404, detail="대시보드 빌드를 찾을 수 없습니다")

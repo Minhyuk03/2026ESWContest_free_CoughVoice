@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -87,6 +87,13 @@ async def create_event(
     captured = datetime.fromisoformat(m["captured_at"])
     if captured.tzinfo is not None:
         captured = captured.astimezone(timezone.utc)  # DB에는 UTC 기준으로 통일 저장
+    # 미래 시각 방어: 엣지 시계가 어긋나거나 수동 POST로 미래 captured_at이 들어오면
+    # 기준선·지연 통계가 왜곡된다(실제로 received_at보다 앞선 이벤트가 관측됐다).
+    # 허용 오차(2분)를 넘는 미래 값은 수신 시각으로 당긴다.
+    now_utc = datetime.now(timezone.utc)
+    cap_aware = captured if captured.tzinfo is not None else captured.replace(tzinfo=timezone.utc)
+    if cap_aware > now_utc + timedelta(minutes=2):
+        captured = now_utc
     event = CoughEvent(
         event_id=event_id,
         device_id=m.get("device_id", "unknown"),
