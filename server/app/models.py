@@ -44,9 +44,14 @@ class CoughEvent(Base):
     similarity: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     peak_rms: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     audio_path: Mapped[str] = mapped_column(String(255))  # 저장된 wav 경로
+    # 등록(enroll-from-events)에 쓰인 이벤트. 보존 정책(NFR-06, 기본 7일)이 원음을
+    # 지울 때 이 이벤트의 wav는 예외로 남긴다 — 재등록·등록 구성 확인에 필요하기 때문.
+    enrolled: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # --- 음향 지표 (P6) ---
     # 원음은 사생활 문제로 오래 두지 않으므로, 나중에 다시 계산할 수 없는 값만 남긴다.
+    # 원음 자체는 core/retention.py가 기본 7일 후 자동 삭제한다(NFR-06). 아래 특징량은
+    # 삭제 후에도 남아 지표·이력이 유지된다.
     # 시간 기반 지표(시간당 횟수·발작 수 등)는 captured_at에서 언제든 다시 뽑을 수 있어
     # 컬럼으로 두지 않는다 — core/cough_metrics.py 참조.
     cough_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)

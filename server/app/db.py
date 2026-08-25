@@ -52,6 +52,11 @@ def _migrate() -> None:
             if col not in ev_cols:
                 conn.execute(text(f"ALTER TABLE cough_events ADD COLUMN {col} {ddl}"))
 
+        # 원음 보존 정책(NFR-06) — 등록에 쓰인 이벤트는 만료 삭제에서 제외한다.
+        if "enrolled" not in ev_cols:
+            conn.execute(text(
+                "ALTER TABLE cough_events ADD COLUMN enrolled BOOLEAN DEFAULT 0"))
+
         al_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(alerts)"))}
         for col, ddl in [("severity", "VARCHAR(10) DEFAULT 'info'"),
                          ("source", "VARCHAR(120)")]:

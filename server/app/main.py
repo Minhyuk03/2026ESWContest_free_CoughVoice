@@ -57,6 +57,10 @@ def on_startup() -> None:
               "무인증입니다. LAN의 누구나 가짜 이벤트를 주입할 수 있으니 상시 운영에서는 "
               "서버·엣지 양쪽에 동일 토큰을 설정하세요.", flush=True)
 
+    # 원음 보존 정책(NFR-06) — 기본 7일 후 만료 WAV 자동 삭제 (등록 샘플 제외)
+    from .core.retention import start_retention_worker
+    start_retention_worker()
+
 
 @app.get("/health", summary="서버 상태 확인", description="서버가 살아있는지 확인하는 헬스체크.")
 def health():

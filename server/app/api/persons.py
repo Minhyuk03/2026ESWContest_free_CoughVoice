@@ -148,11 +148,14 @@ async def enroll_from_events(person_id: int, body: EnrollFromEventsBody,
     db.commit()
 
     # 등록에 쓴 이벤트는 본인 것으로 확정된 셈이니 화자를 붙여 둔다.
+    # enrolled=True로 표시해 보존 정책(기본 7일)이 이 원음을 지우지 않게 한다 —
+    # 재등록·등록 구성 확인에 필요하다.
     used = []
     for eid in body.event_ids:
         ev = db.get(CoughEvent, eid)
         if ev is not None:
             ev.person_id = person_id
+            ev.enrolled = True
             used.append(ev)
     db.commit()
 

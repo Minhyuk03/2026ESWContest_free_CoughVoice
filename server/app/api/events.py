@@ -63,6 +63,8 @@ async def create_event(
             return {"id": dup.id, "person_id": dup.person_id,
                     "similarity": dup.similarity, "duplicate": True, "alerts": []}
 
+    # 기침 원음은 등록·오식별 보정(청취)·이력 재생에 필요해 저장한다. 무기한은 아니고
+    # core/retention.py가 기본 7일 후 자동 삭제한다(NFR-06). 비기침은 아래에서 즉시 지운다.
     wav_path = AUDIO_DIR / f"{uuid.uuid4().hex}.wav"
     wav_path.write_bytes(await audio.read())
 
