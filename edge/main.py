@@ -27,6 +27,8 @@ def main() -> None:
     p.add_argument("--gain", type=float, default=5.0, help="입력 게인 (I2S MEMS 실측 잠정치 ~5x, 거리별로 재측정 필요)")
     p.add_argument("--threshold", type=float, default=0.08, help="RMS 검출 임계치")
     p.add_argument("--device-id", default="rpi5-01")
+    p.add_argument("--heartbeat", type=float, default=60.0,
+                   help="생존 신호 간격(초). 0이면 보내지 않는다")
     args = p.parse_args()
 
     capture = AudioCapture(
@@ -36,7 +38,8 @@ def main() -> None:
         gain=args.gain,
     )
     detector = CoughDetector(capture, rms_threshold=args.threshold)
-    sender = EventSender(args.server, device_id=args.device_id)
+    sender = EventSender(args.server, device_id=args.device_id,
+                         heartbeat_interval=args.heartbeat)
 
     detector.on_cough = lambda wav, peak: (
         print(f"[main] 기침 검출! peak_rms={peak:.3f} → 전송", flush=True),

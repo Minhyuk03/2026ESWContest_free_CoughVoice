@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from ..api import devices
 from ..core import guidance
 from ..core.cough_metrics import burden, hourly_baseline
 from ..db import get_db
@@ -44,8 +45,16 @@ def overview(db: Session = Depends(get_db)):
     events = _today_events(db)
     now = datetime.now(timezone.utc)
 
-    last_received = db.scalar(select(func.max(CoughEvent.received_at)))
-    online = last_received is not None and (now - _as_utc(last_received)) <= DEVICE_ONLINE_WINDOW
+    # 생존은 하트비트로 판정한다. 이벤트 수신 시각으로 판정하던 이전 방식은
+    # "최근에 게이트를 통과한 진짜 기침이 있었나"를 뜻했을 뿐이라, 조용한 밤이면
+    # 장치가 멀쩡해도 오프라인으로 찍혔다(2026-08-25 24시간 관측에서 드러남).
+    # 하트비트 기록이 아직 없는 구버전 엣지를 위해 예전 방식으로 물러선다.
+    online = devices.is_online(db, now=now)
+    heartbeat_based = online is not None
+    if not heartbeat_based:
+        last_received = db.scalar(select(func.max(CoughEvent.received_at)))
+        online = (last_received is not None
+                  and (now - _as_utc(last_received)) <= DEVICE_ONLINE_WINDOW)
 
     day_ago = _utc_naive(now - timedelta(hours=24))
     active_alerts = db.scalar(select(func.count(Alert.id)).where(Alert.created_at >= day_ago)) or 0
@@ -56,7 +65,10 @@ def overview(db: Session = Depends(get_db)):
         "today_cough_count": len(events),
         "active_alerts": active_alerts,
         "person_count": person_count,
-        "device_online": online,
+        "device_online": bool(online),
+        # 판정 근거를 함께 준다. 하트비트가 없는 상태의 device_online은
+        # "최근 기침 있었나"에 가까우므로 화면·보고서에서 구분해야 한다.
+        "device_online_source": "heartbeat" if heartbeat_based else "last_event",
     }
 
 

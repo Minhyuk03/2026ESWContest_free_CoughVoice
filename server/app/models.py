@@ -4,7 +4,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, LargeBinary, String
+from sqlalchemy import (Boolean, DateTime, Float, ForeignKey, Integer, LargeBinary,
+                        String, UniqueConstraint)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -152,6 +153,30 @@ class SymptomReport(Base):
 
     def codes(self) -> list[str]:
         return [c for c in (self.symptoms or "").split(",") if c]
+
+
+class DeviceUptime(Base):
+    """엣지 장치의 시간대별 생존 기록 (P6).
+
+    왜 필요한가 — **엣지는 기침이 있을 때만 서버에 말을 건다.** 그래서 CoughEvent만으로는
+    "조용한 시간"과 "장치가 꺼진 시간"이 DB에서 똑같이 보인다. 이 때문에 두 가지가 망가진다:
+      1. `device_online` 판정이 사실상 "최근에 진짜 기침이 있었나"가 되어 생존 신호가 못 된다
+      2. 개인 기준선이 가동 중단 구간을 '기침 0회'로 세어 실제보다 낮게 잡히고,
+         복구 후 '평소의 N배' 오경보가 난다
+
+    비트 하나마다 행을 남기면 하루 1,440행이 쌓이므로 **(장치, UTC 시각) 단위로 묶어**
+    개수만 센다. 하루 24행이면 충분하고, 시간대별 기준선과 해상도도 맞는다.
+    """
+
+    __tablename__ = "device_uptime"
+    __table_args__ = (UniqueConstraint("device_id", "hour_utc", name="uq_device_hour"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    device_id: Mapped[str] = mapped_column(String(50), index=True)
+    hour_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)  # 정시로 절삭
+    beat_count: Mapped[int] = mapped_column(Integer, default=0)
+    first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class User(Base):

@@ -210,6 +210,50 @@ check("기준선은 24칸", len(base) == 24)
 check("기침 있던 시간대(현지 19시)의 중앙값이 2", base[19] == 2.0, f"{base[19]}")
 check("기침 없던 시간대는 0", base[3] == 0.0, f"{base[3]}")
 
+# --------------------------------------------------------------- 하트비트
+print("\n[하트비트 · 가동시간 보정]")
+from app.api.devices import ONLINE_WINDOW, MIN_BEATS_PER_HOUR, covered_hours, is_online  # noqa: E402
+from app.models import DeviceUptime                                                       # noqa: E402
+from app.core.cough_metrics import utc_naive                                              # noqa: E402
+
+
+def beat(db, when, count=MIN_BEATS_PER_HOUR, dev="rpi5-01"):
+    """지정 시각의 정시 칸에 비트를 기록한다."""
+    hour = when.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    db.add(DeviceUptime(device_id=dev, hour_utc=utc_naive(hour), beat_count=count,
+                        first_seen=utc_naive(when), last_seen=utc_naive(when)))
+    db.commit()
+
+
+db = fresh()
+check("하트비트가 없으면 생존 여부는 '모름'(None)", is_online(db, now=NOW) is None)
+
+db = fresh(); beat(db, NOW - timedelta(seconds=60))
+check("최근 비트가 있으면 온라인", is_online(db, now=NOW) is True)
+
+db = fresh(); beat(db, NOW - timedelta(seconds=600))
+check("오래된 비트면 오프라인", is_online(db, now=NOW) is False)
+
+db = fresh(); beat(db, NOW - timedelta(hours=1), count=MIN_BEATS_PER_HOUR - 1)
+check("비트가 적은 시간은 가동으로 치지 않는다",
+      covered_hours(db, NOW - timedelta(days=1), NOW) == set())
+
+# 기준선: 7일 중 3일만 가동, 나머지는 정전이라 가정
+db = fresh()
+add_events(db, daily([1, 2, 3], per_day=4, hour=10))     # 가동한 날에만 기침 4회
+for d in (1, 2, 3):
+    beat(db, (NOW - timedelta(days=d)).replace(hour=10))
+base = hourly_baseline(db, person_id=1, days=7, now=NOW)
+check("가동한 시간만 표본에 넣어 중앙값 4", base[19] == 4.0, f"{base[19]}")
+check("가동 기록이 없는 시간대는 None", base[3] is None, f"{base[3]}")
+
+# 같은 데이터인데 하트비트가 없으면 정전일이 0으로 섞여 기준선이 내려간다
+db = fresh()
+add_events(db, daily([1, 2, 3], per_day=4, hour=10))
+base_nohb = hourly_baseline(db, person_id=1, days=7, now=NOW)
+check("하트비트가 없으면 예전처럼 전 날짜를 세어 중앙값이 낮아진다",
+      base_nohb[19] == 0.0, f"{base_nohb[19]}")
+
 # --------------------------------------------------------------- 쿨다운
 print("\n[쿨다운]")
 db = fresh()

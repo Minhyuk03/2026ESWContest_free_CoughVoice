@@ -1,4 +1,10 @@
-"""EventSender — 기침 클립을 서버 POST /events로 전송. 실패 시 디스크 큐 + 지수 백오프 재시도 (TC-05)."""
+"""EventSender — 기침 클립을 서버 POST /events로 전송. 실패 시 디스크 큐 + 지수 백오프 재시도 (TC-05).
+
+생존 신호(POST /heartbeat)도 여기서 보낸다. 엣지는 기침이 있을 때만 말을 하므로,
+조용한 밤과 장치가 죽은 상태가 서버에서 구분되지 않는 문제가 있었다. 주기적인 비트가
+있어야 24시간 연속 동작을 검증할 수 있고, 기준선 계산이 가동 중단 구간을 '기침 0회'로
+세는 것도 막을 수 있다.
+"""
 from __future__ import annotations
 
 import json
@@ -22,8 +28,12 @@ class EventSender:
         timeout: float = 5.0,
         max_backoff: float = 60.0,
         outbox_size: int = 32,
+        heartbeat_interval: float = 60.0,   # 0 이하면 생존 신호를 보내지 않는다
     ):
-        self.endpoint = server_url.rstrip("/") + "/events"
+        base = server_url.rstrip("/")
+        self.endpoint = base + "/events"
+        self.heartbeat_endpoint = base + "/heartbeat"
+        self.heartbeat_interval = heartbeat_interval
         self.device_id = device_id
         self.timeout = timeout
         self.max_backoff = max_backoff
@@ -39,6 +49,9 @@ class EventSender:
         self._worker.start()
         self._thread = threading.Thread(target=self._retry_loop, daemon=True)
         self._thread.start()
+        if heartbeat_interval > 0:
+            self._hb = threading.Thread(target=self._heartbeat_loop, daemon=True)
+            self._hb.start()
 
     # ------------------------------------------------------------------
     def send(self, wav_bytes: bytes, peak_rms: float) -> None:
@@ -72,6 +85,29 @@ class EventSender:
 
     def stop(self) -> None:
         self._stop.set()
+
+    # ------------------------------------------------------------------
+    def _heartbeat_loop(self) -> None:
+        """주기적으로 생존을 알린다.
+
+        기침 전송과 스레드를 나눈 이유: 전송 워커는 서버가 죽어 있으면 백오프로 길게
+        잠들 수 있는데, 그동안 생존 신호까지 멈추면 서버가 복구된 뒤에도 한참 오프라인으로
+        보인다. 실패해도 재시도 큐에 쌓지 않는다 — 지나간 시점의 생존은 나중에 알려봐야
+        의미가 없고, 큐만 불린다.
+        """
+        # 기동 직후 한 번 보내 서버가 즉시 온라인으로 인식하게 한다.
+        first = True
+        while not self._stop.is_set():
+            if not first:
+                if self._stop.wait(self.heartbeat_interval):
+                    break
+            first = False
+            try:
+                requests.post(self.heartbeat_endpoint,
+                              json={"device_id": self.device_id},
+                              timeout=self.timeout)
+            except requests.RequestException:
+                pass   # 서버가 잠깐 없는 것은 정상 — 다음 주기에 다시 보낸다
 
     # ------------------------------------------------------------------
     def _post(self, wav_bytes: bytes, meta: dict) -> bool:

@@ -272,12 +272,15 @@ def hourly_baseline(db: Session, *, person_id: Optional[int] = None,
     exclude_recent_hours를 주면 최근 구간을 기준선에서 뺀다. 지금 판단하려는 구간이
     기준선에 섞이면 "평소보다 늘었나"를 자기 자신과 비교하게 된다.
 
-    **알려진 한계 — 기침이 0인 날과 장치가 꺼져 있던 날을 구분하지 못한다.**
-    엣지는 기침이 있을 때만 이벤트를 보내므로 "그날 조용했다"와 "그날 서버가 죽어
-    있었다"가 DB에서 똑같이 보인다. 여기서는 창 안의 모든 날짜를 표본에 넣는다
-    (상시 운영이 배포 전제이므로). 정전·네트워크 장애로 며칠 비면 기준선이 실제보다
-    낮게 잡히고, 복구 후에 '평소의 N배' 경고가 잘못 뜰 수 있다.
-    제대로 고치려면 엣지가 주기적으로 생존 신호를 보내 가동 시간을 따로 기록해야 한다(미구현).
+    **가동 중단 구간은 표본에서 뺀다.** 엣지는 기침이 있을 때만 이벤트를 보내므로
+    "그날 조용했다"와 "그날 장치가 꺼져 있었다"가 이벤트만으로는 구분되지 않는다.
+    그대로 두면 정전·네트워크 장애 구간이 '기침 0회'로 세어져 기준선이 실제보다 낮게
+    잡히고, 복구 후 '평소의 N배' 경고가 잘못 뜬다. 그래서 하트비트가 남아 있는
+    (날짜, 시각) 칸만 센다 — DeviceUptime 참조.
+
+    하트비트 기록이 아예 없으면(구버전 엣지) 예전처럼 창 안의 모든 날짜를 쓴다.
+    그 경우 위 왜곡이 그대로 남으므로, 판단이 중요한 자리에서는 /devices로
+    가동 이력이 있는지 함께 확인할 것.
     """
     now = now or datetime.now(timezone.utc)
     end = now - timedelta(hours=exclude_recent_hours)
@@ -292,10 +295,17 @@ def hourly_baseline(db: Session, *, person_id: Optional[int] = None,
         cells[(lt.date(), lt.hour)] = cells.get((lt.date(), lt.hour), 0) + 1
 
     days_in_window = _dates_between(start, end)
+    from ..api.devices import covered_hours          # 순환 임포트를 피해 지역에서 부른다
+    covered = covered_hours(db, start, end)
+
     out: List[Optional[float]] = []
     for h in range(24):
-        vals = [cells.get((d, h), 0) for d in days_in_window]
-        # 창이 비어 있을 때만 None. 그 밖에는 0도 유효한 관측값이다.
+        if covered:
+            vals = [cells.get((d, h), 0) for d in days_in_window if (d, h) in covered]
+        else:
+            vals = [cells.get((d, h), 0) for d in days_in_window]
+        # 관측된 칸이 하나도 없으면 None. 0으로 채우면 '가동 안 함'과 '기침 없음'이
+        # 구분되지 않고, 배수 계산에서 근거 없는 기준선이 된다.
         out.append(float(median(vals)) if vals else None)
     return out
 

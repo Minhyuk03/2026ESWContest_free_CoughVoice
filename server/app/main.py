@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .api.alerts import router as alerts_router, seed_rules
 from .api.auth import router as auth_router, seed_admin
+from .api.devices import router as devices_router
 from .api.events import router as events_router
 from .api.persons import router as persons_router
 from .api.stats import router as stats_router
@@ -31,6 +32,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(events_router)
+app.include_router(devices_router)
 app.include_router(auth_router)
 app.include_router(persons_router)
 app.include_router(alerts_router)
