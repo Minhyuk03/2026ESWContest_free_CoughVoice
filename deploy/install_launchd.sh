@@ -37,6 +37,7 @@ cat > "$PLIST" <<PLIST_EOF
     <dict>
         <key>PATH</key><string>$VENV/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
         <key>HOME</key><string>$HOME</string>
+${COUGHID_DEVICE_TOKEN:+        <key>COUGHID_DEVICE_TOKEN</key><string>$COUGHID_DEVICE_TOKEN</string>}
     </dict>
 </dict>
 </plist>

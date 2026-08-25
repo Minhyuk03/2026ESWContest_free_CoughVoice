@@ -28,6 +28,10 @@ Type=simple
 User=mh
 WorkingDirectory=/home/mh/Cough_EmbeddedSystem/edge
 Environment=PYTHONUNBUFFERED=1
+# 장치 인증 토큰(선택). 서버에도 같은 COUGHID_DEVICE_TOKEN을 설정하면 POST /events·
+# /heartbeat가 이 토큰을 요구해 LAN의 가짜 이벤트 주입을 막는다. 양쪽 값이 같아야 하며,
+# main.py가 이 환경변수를 자동으로 읽어 X-Device-Token으로 보낸다.
+#Environment=COUGHID_DEVICE_TOKEN=여기에-공유-비밀값
 ExecStart=/home/mh/Cough_EmbeddedSystem/monitor/.venv/bin/python main.py \
     --server http://mhui-Macmini.local:8000 \
     --device 0 \

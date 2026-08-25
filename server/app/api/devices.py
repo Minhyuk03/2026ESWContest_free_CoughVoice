@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from ..core.cough_metrics import as_utc, utc_naive
 from ..db import get_db
 from ..models import DeviceUptime
+from .security import require_device_token
 
 router = APIRouter(tags=["장치"])
 
@@ -38,7 +39,8 @@ class HeartbeatBody(BaseModel):
 
 @router.post("/heartbeat", summary="엣지 생존 신호",
              description="엣지가 주기적으로 호출한다. (장치, 시각) 단위로 묶어 횟수만 센다.")
-def heartbeat(body: HeartbeatBody, db: Session = Depends(get_db)):
+def heartbeat(body: HeartbeatBody, db: Session = Depends(get_db),
+              _token: None = Depends(require_device_token)):
     now = datetime.now(timezone.utc)
     hour = now.replace(minute=0, second=0, microsecond=0)
     row = db.scalar(select(DeviceUptime).where(

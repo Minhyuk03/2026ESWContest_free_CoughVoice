@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from ..core.alert_engine import engine as alert_engine
 from ..db import get_db
+from .security import require_device_token
 from ..ml.cough_gate import gate
 from ..ml.identifier import identifier
 from ..models import CoughEvent, Person
@@ -47,6 +48,7 @@ async def create_event(
     audio: UploadFile = File(...),
     meta: str = Form(...),
     db: Session = Depends(get_db),
+    _token: None = Depends(require_device_token),
 ):
     m = json.loads(meta)
 

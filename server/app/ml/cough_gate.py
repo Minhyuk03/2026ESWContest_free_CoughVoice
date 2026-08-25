@@ -61,9 +61,37 @@ DEFAULT_COUGH_THRESHOLD = float(os.environ.get("COUGHID_COUGH_THRESHOLD", "0.05"
 PANNS_DIR = os.path.join(os.path.expanduser("~"), "panns_data")
 LABELS_CSV = os.path.join(PANNS_DIR, "class_labels_indices.csv")
 CHECKPOINT = os.path.join(PANNS_DIR, "Cnn14_mAP=0.431.pth")
-LABELS_URL = ("http://storage.googleapis.com/us_audioset/youtube_corpus/v1/csv/"
+# 라벨은 https로 받는다(같은 호스트가 https를 지원한다). http면 중간자가 내용을
+# 바꿔치기해도 알 수 없다.
+LABELS_URL = ("https://storage.googleapis.com/us_audioset/youtube_corpus/v1/csv/"
               "class_labels_indices.csv")
 CHECKPOINT_URL = "https://zenodo.org/record/3987831/files/Cnn14_mAP%3D0.431.pth?download=1"
+# 체크포인트 무결성 검증용 SHA256. 신뢰할 수 있는 값을 환경변수로 주면 그것과
+# 일치할 때만 사용한다(공급망 변조 방지). 없으면 검증을 건너뛰되 경고한다 —
+# 잘못된 해시를 코드에 박아 모두의 로딩을 깨뜨리는 것보다 낫다.
+CHECKPOINT_SHA256 = os.environ.get("COUGHID_PANNS_SHA256", "").strip().lower()
+CHECKPOINT_MIN_BYTES = 3 * 10**8   # 약 300MB — 부분 다운로드 걸러내기
+
+
+def _sha256(path: str) -> str:
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def _download_atomic(url: str, dest: str) -> None:
+    """임시 파일로 받은 뒤 rename한다. 다운로드가 중간에 끊겨도 목적지에는
+    잘린 파일이 '완성된 것처럼' 남지 않는다(예전 방식은 부분 파일을 그대로 뒀다)."""
+    tmp = dest + ".part"
+    try:
+        urllib.request.urlretrieve(url, tmp)
+        os.replace(tmp, dest)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
 
 
 def _ensure_assets() -> None:
@@ -71,10 +99,21 @@ def _ensure_assets() -> None:
     os.makedirs(PANNS_DIR, exist_ok=True)
     if not os.path.isfile(LABELS_CSV):
         print("[cough_gate] AudioSet 라벨 다운로드 중...", flush=True)
-        urllib.request.urlretrieve(LABELS_URL, LABELS_CSV)
-    if not os.path.exists(CHECKPOINT) or os.path.getsize(CHECKPOINT) < 3e8:
+        _download_atomic(LABELS_URL, LABELS_CSV)
+    if not os.path.exists(CHECKPOINT) or os.path.getsize(CHECKPOINT) < CHECKPOINT_MIN_BYTES:
         print("[cough_gate] PANNs 체크포인트 다운로드 중 (약 300MB, 최초 1회)...", flush=True)
-        urllib.request.urlretrieve(CHECKPOINT_URL, CHECKPOINT)
+        _download_atomic(CHECKPOINT_URL, CHECKPOINT)
+
+    if CHECKPOINT_SHA256:
+        actual = _sha256(CHECKPOINT)
+        if actual != CHECKPOINT_SHA256:
+            os.unlink(CHECKPOINT)   # 변조 가능성 — 다음 기동에서 다시 받게 지운다
+            raise RuntimeError(
+                f"PANNs 체크포인트 SHA256 불일치 (기대 {CHECKPOINT_SHA256[:12]}…, "
+                f"실제 {actual[:12]}…) — 변조 가능성이 있어 파일을 삭제했다")
+    else:
+        print("[cough_gate] ⚠ COUGHID_PANNS_SHA256 미설정 — 체크포인트 무결성 검증을 "
+              "건너뛴다", flush=True)
 
 
 class GateResult(NamedTuple):

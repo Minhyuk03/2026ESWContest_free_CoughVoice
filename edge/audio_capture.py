@@ -71,12 +71,25 @@ class AudioCapture:
         self.on_chunk = None  # callable(np.ndarray) — CoughDetector가 등록
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        # 마지막으로 오디오 청크가 들어온 시각(monotonic). 워치독이 이 값으로
+        # "스트림은 살아 있는데 마이크가 조용해진" 정지를 감지한다.
+        self._last_audio: float | None = None
+        self._started: float | None = None
 
     # ---------------------------------------------------------- public
     def start(self) -> None:
+        self._started = time.monotonic()
         target = self._run_mic if self.source == "mic" else self._run_file
         self._thread = threading.Thread(target=target, daemon=True)
         self._thread.start()
+
+    def seconds_since_audio(self) -> float | None:
+        """마지막 오디오 이후 경과 초. 아직 한 번도 못 받았으면 시작 이후 경과.
+
+        워치독용 — 반환값이 임계치를 넘으면 캡처가 멈춘 것으로 본다. start() 전이면 None.
+        """
+        ref = self._last_audio if self._last_audio is not None else self._started
+        return None if ref is None else time.monotonic() - ref
 
     def stop(self) -> None:
         self._stop.set()
@@ -138,6 +151,8 @@ class AudioCapture:
 
     # ---------------------------------------------------------- common
     def _emit(self, chunk: np.ndarray) -> None:
+        if len(chunk):
+            self._last_audio = time.monotonic()
         self.ring.push(chunk)
         if self.on_chunk:
             self.on_chunk(chunk)

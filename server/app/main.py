@@ -51,6 +51,12 @@ def on_startup() -> None:
     finally:
         db.close()
 
+    from .api.security import token_configured
+    if not token_configured():
+        print("[startup] ⚠ COUGHID_DEVICE_TOKEN 미설정 — POST /events·/heartbeat가 "
+              "무인증입니다. LAN의 누구나 가짜 이벤트를 주입할 수 있으니 상시 운영에서는 "
+              "서버·엣지 양쪽에 동일 토큰을 설정하세요.", flush=True)
+
 
 @app.get("/health", summary="서버 상태 확인", description="서버가 살아있는지 확인하는 헬스체크.")
 def health():

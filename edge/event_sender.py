@@ -38,6 +38,7 @@ class EventSender:
         max_backoff: float = 60.0,
         outbox_size: int = 32,
         heartbeat_interval: float = 60.0,   # 0 이하면 생존 신호를 보내지 않는다
+        device_token: str = "",             # 서버가 요구하면 X-Device-Token으로 보낸다
     ):
         base = server_url.rstrip("/")
         self.endpoint = base + "/events"
@@ -46,6 +47,9 @@ class EventSender:
         self.device_id = device_id
         self.timeout = timeout
         self.max_backoff = max_backoff
+        # 서버 COUGHID_DEVICE_TOKEN과 같은 값. 비어 있으면 헤더를 붙이지 않는다
+        # (서버도 미설정이면 호환 모드로 통과한다).
+        self._auth_headers = {"X-Device-Token": device_token} if device_token else {}
         QUEUE_DIR.mkdir(exist_ok=True)
         self._stop = threading.Event()
         # send()는 sounddevice 오디오 콜백 안에서 호출된다. 거기서 HTTP를 기다리면
@@ -114,6 +118,7 @@ class EventSender:
             try:
                 requests.post(self.heartbeat_endpoint,
                               json={"device_id": self.device_id},
+                              headers=self._auth_headers,
                               timeout=self.timeout)
             except Exception:
                 # 서버가 잠깐 없는 것은 정상 — 다음 주기에 다시 보낸다.
@@ -134,6 +139,7 @@ class EventSender:
                 self.endpoint,
                 files={"audio": ("cough.wav", wav_bytes, "audio/wav")},
                 data={"meta": json.dumps(meta)},
+                headers=self._auth_headers,
                 timeout=self.timeout,
             )
             print(f"[sender] POST {r.status_code} {r.text[:120]}", flush=True)
