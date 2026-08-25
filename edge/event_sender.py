@@ -18,6 +18,15 @@ from pathlib import Path
 import requests
 
 QUEUE_DIR = Path(__file__).parent / "queue"
+BAD_DIR = QUEUE_DIR / "bad"          # 반복 실패한 항목 격리
+
+# 큐 상한. 파이 SD 여유가 1GB 안팎이고 이벤트 하나가 80KB이므로 무한정 쌓게 두면
+# 디스크를 채운다 (2026-08-25 실제로 4,314파일 177MB까지 자랐고 여유가 977MB였다).
+# 넘치면 **오래된 것부터** 버린다 — 최근 이벤트가 진단에 더 쓸모 있다.
+QUEUE_MAX_EVENTS = 500
+# 같은 항목을 이만큼 시도해도 서버가 거부하면 격리한다. 서버가 4xx/5xx로 거절하는
+# 항목을 무한 재시도하면 그 뒤의 정상 항목까지 막힌다.
+MAX_ATTEMPTS_PER_ITEM = 3
 
 
 class EventSender:
@@ -80,7 +89,7 @@ class EventSender:
                 wav_bytes, meta = self._outbox.get(timeout=0.5)
             except queue.Empty:
                 continue
-            if not self._post(wav_bytes, meta):
+            if self._post(wav_bytes, meta) != "ok":
                 self._enqueue(wav_bytes, meta)
 
     def stop(self) -> None:
@@ -106,11 +115,20 @@ class EventSender:
                 requests.post(self.heartbeat_endpoint,
                               json={"device_id": self.device_id},
                               timeout=self.timeout)
-            except requests.RequestException:
-                pass   # 서버가 잠깐 없는 것은 정상 — 다음 주기에 다시 보낸다
+            except Exception:
+                # 서버가 잠깐 없는 것은 정상 — 다음 주기에 다시 보낸다.
+                # RequestException뿐 아니라 어떤 예외로도 이 스레드가 죽으면 안 된다.
+                pass
 
     # ------------------------------------------------------------------
-    def _post(self, wav_bytes: bytes, meta: dict) -> bool:
+    def _post(self, wav_bytes: bytes, meta: dict) -> str:
+        """전송 결과를 세 갈래로 구분한다: ok / server_error / unreachable.
+
+        "서버에 닿지 못했다"와 "서버가 이 항목을 거절했다"는 대응이 달라야 한다.
+        전자는 기다리면 풀리지만, 후자는 기다려도 그 항목은 영원히 안 된다.
+        예전에는 둘 다 False였고 실패 시 루프를 break해서, 거절당하는 항목 하나가
+        뒤의 정상 항목을 전부 막았다.
+        """
         try:
             r = requests.post(
                 self.endpoint,
@@ -118,42 +136,104 @@ class EventSender:
                 data={"meta": json.dumps(meta)},
                 timeout=self.timeout,
             )
-            ok = r.status_code < 300
             print(f"[sender] POST {r.status_code} {r.text[:120]}", flush=True)
-            return ok
+            return "ok" if r.status_code < 300 else "server_error"
         except requests.RequestException as e:
             print(f"[sender] 전송 실패: {e}", flush=True)
-            return False
+            return "unreachable"
 
     def _enqueue(self, wav_bytes: bytes, meta: dict) -> None:
         stem = QUEUE_DIR / uuid.uuid4().hex
         stem.with_suffix(".wav").write_bytes(wav_bytes)
         stem.with_suffix(".json").write_text(json.dumps(meta))
         print(f"[sender] 큐 적재: {stem.name}", flush=True)
+        self._trim_queue()
+
+    def _trim_queue(self) -> None:
+        """큐가 상한을 넘으면 오래된 것부터 버린다.
+
+        상한이 없으면 서버가 오래 안 붙는 동안 SD 카드를 채운다. 실제로 그렇게 됐다.
+        """
+        items = sorted(QUEUE_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime)
+        excess = len(items) - QUEUE_MAX_EVENTS
+        if excess <= 0:
+            return
+        for meta_path in items[:excess]:
+            meta_path.with_suffix(".wav").unlink(missing_ok=True)
+            meta_path.unlink(missing_ok=True)
+        print(f"[sender] 큐 상한({QUEUE_MAX_EVENTS}) 초과 — 오래된 {excess}건 폐기", flush=True)
+
+    def _discard(self, meta_path: Path, reason: str, keep: bool = False) -> None:
+        wav_path = meta_path.with_suffix(".wav")
+        if keep:
+            BAD_DIR.mkdir(exist_ok=True)
+            for q in (meta_path, wav_path):
+                if q.exists():
+                    q.replace(BAD_DIR / q.name)
+        else:
+            wav_path.unlink(missing_ok=True)
+            meta_path.unlink(missing_ok=True)
+        print(f"[sender] 큐 항목 제외({reason}): {meta_path.stem}", flush=True)
 
     def _retry_loop(self) -> None:
+        """디스크 큐를 비운다.
+
+        **이 스레드는 절대 죽으면 안 된다.** 예전에는 손상된 큐 파일 하나에
+        `json.loads`가 예외를 던지면 데몬 스레드가 조용히 끝나버렸고, 그 뒤로 재시도가
+        영원히 멈췄다. 2026-08-25에 0바이트 파일 12개 때문에 실제로 그렇게 됐고,
+        이벤트가 4.5시간 늦게 도착하고 큐가 177MB까지 자랐다.
+        그래서 항목 단위로도, 루프 전체로도 예외를 잡는다.
+        """
         backoff = 2.0
+        attempts: dict = {}
+        self._trim_queue()          # 기동 시 이전 실행이 남긴 초과분을 정리한다
         while not self._stop.is_set():
-            pending = sorted(QUEUE_DIR.glob("*.json"))
-            if not pending:
-                backoff = 2.0
-                time.sleep(2)
-                continue
-            sent_any = False
-            for meta_path in pending:
-                wav_path = meta_path.with_suffix(".wav")
-                if not wav_path.exists():
-                    meta_path.unlink(missing_ok=True)
-                    continue
-                meta = json.loads(meta_path.read_text())
-                if self._post(wav_path.read_bytes(), meta):
-                    wav_path.unlink(missing_ok=True)
-                    meta_path.unlink(missing_ok=True)
-                    sent_any = True
-                else:
-                    break  # 서버 아직 다운 → 백오프
+            try:
+                sent_any, reachable = self._drain_once(attempts)
+            except Exception as e:  # 예상 못 한 오류에도 스레드를 유지한다
+                print(f"[sender] 재시도 루프 오류(계속 진행): {e!r}", flush=True)
+                sent_any, reachable = False, True
             if sent_any:
                 backoff = 2.0
-            else:
+            elif not reachable:
                 time.sleep(backoff)
                 backoff = min(backoff * 2, self.max_backoff)
+            else:
+                time.sleep(2)
+
+    def _drain_once(self, attempts: dict) -> tuple:
+        """큐를 한 바퀴 돈다. (하나라도 보냈나, 서버에 닿았나)를 돌려준다."""
+        pending = sorted(QUEUE_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime)
+        if not pending:
+            return False, True
+        sent_any = False
+        for meta_path in pending:
+            if self._stop.is_set():
+                break
+            wav_path = meta_path.with_suffix(".wav")
+            if not wav_path.exists() or wav_path.stat().st_size == 0:
+                self._discard(meta_path, "오디오 없음")
+                continue
+            try:
+                meta = json.loads(meta_path.read_text())
+            except (json.JSONDecodeError, OSError, ValueError):
+                # 전송 도중 프로세스가 죽으면 0바이트 파일이 남는다. 되살릴 수 없으므로
+                # 버린다. 예전에는 여기서 예외가 스레드를 통째로 죽였다.
+                self._discard(meta_path, "메타 손상")
+                continue
+
+            result = self._post(wav_path.read_bytes(), meta)
+            if result == "ok":
+                self._discard(meta_path, "전송 완료")
+                attempts.pop(meta_path.name, None)
+                sent_any = True
+            elif result == "unreachable":
+                return sent_any, False        # 서버가 없다 — 나머지는 다음 기회에
+            else:
+                n = attempts.get(meta_path.name, 0) + 1
+                attempts[meta_path.name] = n
+                if n >= MAX_ATTEMPTS_PER_ITEM:
+                    self._discard(meta_path, f"{n}회 거절", keep=True)
+                    attempts.pop(meta_path.name, None)
+                # 서버는 살아 있으므로 다음 항목을 계속 시도한다
+        return sent_any, True

@@ -9,6 +9,15 @@
 #
 # 서버 주소는 IP가 아니라 mDNS 이름을 쓴다. 공유기가 IP를 바꿔도 끊기지 않는다.
 # 네트워크가 늦게 붙는 부팅 직후를 대비해 network-online.target을 기다린다.
+#
+# ⚠ **/etc/hosts 항목이 반드시 있어야 한다** (2026-08-25 장애):
+#     echo "192.168.219.134 mhui-Macmini.local mhui-macmini.local" | sudo tee -a /etc/hosts
+#   이 집 공유기 환경에서 파이의 .local 해석이 간헐적으로 실패한다
+#   (Failed to resolve 'mhui-macmini.local' / connect timeout). 그때마다 이벤트가
+#   디스크 큐로 밀리는데, 큐가 커지면 SD 카드를 채운다. 실제로 4,314파일 177MB까지
+#   자랐고 여유가 977MB(93% 사용)까지 떨어졌다.
+#   requests가 호스트명을 소문자로 바꾸므로 **대소문자 두 형태 모두** 넣는다.
+#   IP가 바뀌면 이 줄과 /etc/hosts를 함께 고친다.
 [Unit]
 Description=Cough-ID edge (capture -> detect -> send)
 After=network-online.target sound.target

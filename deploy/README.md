@@ -55,10 +55,28 @@ cd ~/srv/Cough_EmbeddedSystem/dashboard && npm run build
 ## 엣지 (라즈베리파이)
 
 ```bash
+# .local 해석이 간헐적으로 실패하므로 먼저 /etc/hosts에 박는다 (아래 설명 참조)
+echo "192.168.219.134 mhui-Macmini.local mhui-macmini.local" | sudo tee -a /etc/hosts
 sudo cp deploy/coughid-edge.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now coughid-edge
 ```
+
+**`/etc/hosts` 항목을 빠뜨리면 안 된다.** 이 환경에서 파이의 mDNS 해석이 간헐적으로
+실패하는데(`Failed to resolve 'mhui-macmini.local'`), 그때마다 이벤트가 디스크 큐로
+밀린다. 2026-08-25에 그 상태로 방치돼 큐가 4,314파일 177MB까지 자랐고 SD 여유가
+977MB(93% 사용)까지 떨어졌다. `requests`가 호스트명을 소문자로 바꾸므로 대소문자
+두 형태를 모두 넣는다.
+
+큐 상태 점검:
+
+```bash
+ls ~/Cough_EmbeddedSystem/edge/queue/ | wc -l    # 정상이면 0에 가깝다
+df -h /
+```
+
+큐는 500건에서 오래된 것부터 버리도록 상한이 걸려 있다(`event_sender.py`).
+`queue/bad/`에 파일이 쌓이면 서버가 반복 거절한 항목이므로 내용을 확인해야 한다.
 
 서버 주소는 유닛 파일의 `--server` 값이다. 서버 장비를 바꾸면 그 줄만 고친다.
 
