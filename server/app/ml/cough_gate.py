@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import os
 import urllib.request
+from typing import NamedTuple, Optional
 
 # panns_inference는 matplotlib을 import한다. speechbrain(식별 모듈)이 먼저 적재된 뒤에
 # 그 import가 일어나면, matplotlib이 스택을 추적하는 과정에서 speechbrain의 지연 로딩
@@ -43,6 +44,16 @@ PANNS_RATE = 32000        # PANNs 입력 규격
 MIN_SAMPLES = PANNS_RATE  # 1초. CNN14의 풀링 단계를 통과하려면 최소 길이가 필요하다
 COUGH_CLASS = 47          # AudioSet "Cough"
 THROAT_CLASS = 48         # AudioSet "Throat clearing" — 헛기침도 수집 대상이므로 함께 센다
+
+# CNN14는 한 번의 forward로 527클래스를 전부 계산한다. 지금까지 위 두 개만 읽고
+# 나머지를 버렸는데, 아래 두 개는 참고자료가 기록을 권한 지표라 함께 꺼낸다.
+# 추가 연산 비용은 0이다 — 이미 계산된 벡터에서 인덱스를 더 읽을 뿐이다.
+#
+# **판정에는 쓰지 않는다.** 우리 데이터로 정확도를 재본 적이 없는 미검증 지표다.
+# 특히 AudioSet "Whoop"(10)은 환호성을 뜻하지 백일해의 흡기성 whoop이 아니라서
+# 쓰지 않는다. Gasp이 흡기음에 가깝지만 그 역시 검증된 대응은 아니다.
+WHEEZE_CLASS = 42         # AudioSet "Wheeze"
+GASP_CLASS = 44           # AudioSet "Gasp"
 
 # 임계치 근거는 위 모듈 docstring 참조. 감으로 정한 값이 아니다.
 DEFAULT_COUGH_THRESHOLD = float(os.environ.get("COUGHID_COUGH_THRESHOLD", "0.05"))
@@ -66,6 +77,13 @@ def _ensure_assets() -> None:
         urllib.request.urlretrieve(CHECKPOINT_URL, CHECKPOINT)
 
 
+class GateResult(NamedTuple):
+    is_cough: bool
+    cough_score: float
+    wheeze: Optional[float]     # 미검증 부가 지표 — 판정에 쓰지 않는다
+    gasp: Optional[float]
+
+
 class CoughGate:
     def __init__(self, threshold: float = DEFAULT_COUGH_THRESHOLD):
         self.threshold = threshold
@@ -85,12 +103,15 @@ class CoughGate:
             self._tagger = AudioTagging(checkpoint_path=CHECKPOINT, device="cpu")
         return self._tagger
 
-    def score(self, wav_path: str) -> float:
-        """Cough + Throat clearing 확률의 합. 크롭하지 않은 원본 전체를 넣는다."""
+    def analyze(self, wav_path: str) -> "GateResult":
+        """한 번의 forward로 판정 점수와 부가 지표를 함께 돌려준다.
+
+        게이트 판정에 쓰는 것은 cough_score 하나뿐이다. wheeze·gasp는 기록용이다.
+        """
         tagger = self._ensure_tagger()
         x, rate = read_wav(wav_path)
         if len(x) == 0:
-            return 0.0
+            return GateResult(False, 0.0, None, None)
         t = torch.from_numpy(np.ascontiguousarray(x)).unsqueeze(0)
         if rate != PANNS_RATE:
             t = torchaudio.functional.resample(t, rate, PANNS_RATE)
@@ -102,11 +123,21 @@ class CoughGate:
         with torch.no_grad():
             clipwise, _ = tagger.inference(t.numpy())
         p = clipwise[0]
-        return float(p[COUGH_CLASS]) + float(p[THROAT_CLASS])
+        score = float(p[COUGH_CLASS]) + float(p[THROAT_CLASS])
+        return GateResult(
+            is_cough=score >= self.threshold,
+            cough_score=round(score, 5),
+            wheeze=round(float(p[WHEEZE_CLASS]), 5),
+            gasp=round(float(p[GASP_CLASS]), 5),
+        )
+
+    def score(self, wav_path: str) -> float:
+        """Cough + Throat clearing 확률의 합. 크롭하지 않은 원본 전체를 넣는다."""
+        return self.analyze(wav_path).cough_score
 
     def check(self, wav_path: str) -> tuple[bool, float]:
-        s = self.score(wav_path)
-        return s >= self.threshold, round(s, 5)
+        r = self.analyze(wav_path)
+        return r.is_cough, r.cough_score
 
 
 gate = CoughGate()   # 싱글턴 — 체크포인트 로딩 비용 1회

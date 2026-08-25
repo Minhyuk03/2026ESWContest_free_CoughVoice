@@ -44,6 +44,20 @@ def _migrate() -> None:
                 "CREATE INDEX IF NOT EXISTS ix_cough_events_event_id "
                 "ON cough_events (event_id)"))
 
+        # P6 — 음향 지표. 기존 행은 NULL로 남는다(당시 저장하지 않았으므로).
+        # 집계 시 NULL을 0으로 취급하면 "휘징이 없었다"는 잘못된 사실이 되므로
+        # cough_metrics는 NULL 행을 표본에서 빼는 방식으로 다룬다.
+        for col, ddl in [("cough_score", "FLOAT"), ("wheeze_prob", "FLOAT"),
+                         ("gasp_prob", "FLOAT")]:
+            if col not in ev_cols:
+                conn.execute(text(f"ALTER TABLE cough_events ADD COLUMN {col} {ddl}"))
+
+        al_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(alerts)"))}
+        for col, ddl in [("severity", "VARCHAR(10) DEFAULT 'info'"),
+                         ("source", "VARCHAR(120)")]:
+            if col not in al_cols:
+                conn.execute(text(f"ALTER TABLE alerts ADD COLUMN {col} {ddl}"))
+
         rule_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(alert_rules)"))}
         for col, ddl in [
             ("kind", "VARCHAR(20) DEFAULT 'count_window'"),
@@ -52,9 +66,22 @@ def _migrate() -> None:
             ("night_start_hour", "INTEGER DEFAULT 22"),
             ("night_end_hour", "INTEGER DEFAULT 6"),
             ("cooldown_minutes", "INTEGER DEFAULT 30"),
+            # P6 — 변화·기간 경고 파라미터
+            ("baseline_days", "INTEGER DEFAULT 7"),
+            ("ratio_threshold", "FLOAT DEFAULT 2.0"),
+            ("sustain_hours", "INTEGER DEFAULT 24"),
+            ("duration_days", "INTEGER DEFAULT 14"),
+            ("allowed_gap_days", "INTEGER DEFAULT 2"),
         ]:
             if col not in rule_cols:
                 conn.execute(text(f"ALTER TABLE alert_rules ADD COLUMN {col} {ddl}"))
+
+        # 웹훅은 구현하지 않았는데 규칙 카드가 "보호자 웹훅 · 관리자 웹훅"으로 표시해
+        # 화면이 거짓을 말하고 있었다. 기본값 그대로인 행만 실제 동작으로 바로잡는다
+        # (사용자가 직접 고친 문구는 건드리지 않는다).
+        conn.execute(text(
+            "UPDATE alert_rules SET channels_text = '대시보드 표시' "
+            "WHERE channels_text = '보호자 웹훅 · 관리자 웹훅'"))
 
 
 def get_db():

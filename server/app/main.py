@@ -13,6 +13,7 @@ from .api.auth import router as auth_router, seed_admin
 from .api.events import router as events_router
 from .api.persons import router as persons_router
 from .api.stats import router as stats_router
+from .api.symptoms import router as symptoms_router
 from .db import SessionLocal, init_db
 
 app = FastAPI(
@@ -34,6 +35,7 @@ app.include_router(auth_router)
 app.include_router(persons_router)
 app.include_router(alerts_router)
 app.include_router(stats_router)
+app.include_router(symptoms_router)
 
 
 @app.on_event("startup")

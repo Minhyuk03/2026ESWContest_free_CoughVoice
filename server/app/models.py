@@ -44,6 +44,20 @@ class CoughEvent(Base):
     peak_rms: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     audio_path: Mapped[str] = mapped_column(String(255))  # 저장된 wav 경로
 
+    # --- 음향 지표 (P6) ---
+    # 원음은 사생활 문제로 오래 두지 않으므로, 나중에 다시 계산할 수 없는 값만 남긴다.
+    # 시간 기반 지표(시간당 횟수·발작 수 등)는 captured_at에서 언제든 다시 뽑을 수 있어
+    # 컬럼으로 두지 않는다 — core/cough_metrics.py 참조.
+    cough_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # PANNs(CNN14)는 한 번의 forward에서 AudioSet 527클래스를 모두 계산한다.
+    # 지금까지 Cough(47)·Throat clearing(48)만 읽고 나머지를 버렸는데,
+    # Wheeze(42)·Gasp(44)는 참고자료가 기록을 권한 지표라 함께 저장한다.
+    # **미검증 지표다.** 우리 데이터로 정확도를 재본 적이 없으므로 판정에 쓰지 않고
+    # 기록·전시 용도로만 둔다. 특히 AudioSet "Whoop"(10)은 환호성이지 백일해의
+    # 흡기성 whoop이 아니므로 쓰지 않는다.
+    wheeze_prob: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    gasp_prob: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
     person: Mapped[Optional[Person]] = relationship(back_populates="events")
 
 
@@ -56,6 +70,11 @@ class Alert(Base):
     message: Mapped[str] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
+    # 화면 강조·정렬용. 질환 중증도가 아니라 "얼마나 급히 확인할 일인가"다.
+    severity: Mapped[str] = mapped_column(String(10), default="info")
+    # 경계값의 임상 출처. 근거 있는 값과 탐색용 값을 화면에서 구분하기 위해 남긴다.
+    source: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+
 
 class AlertRule(Base):
     """S4 알림 규칙 카드.
@@ -67,15 +86,27 @@ class AlertRule(Base):
 
     __tablename__ = "alert_rules"
 
+    # 절대 횟수 규칙. 질환 판정 근거로는 쓸 수 없고(횟수 분포가 질환 간 크게 겹친다,
+    # core/guidance.py 참조) 사용자가 직접 정한 관찰 기준으로만 의미가 있다.
     KIND_COUNT = "count_window"    # 지정 시간 안에 N회 이상
     KIND_NIGHT = "night_window"    # 야간 시간대에 한해 N회 이상
     KIND_UNKNOWN = "unknown"       # 미등록 화자의 기침이 발생하면 즉시
+
+    # 참고자료가 권고한 경고 구조 (P6).
+    KIND_BASELINE = "baseline_delta"   # 개인 기준선 대비 배수 증가가 지속될 때
+    KIND_DURATION = "duration_days"    # 기침이 N일 이상 이어질 때
+    KIND_URGENT = "urgent_symptom"     # 긴급 증상 입력 시 횟수와 무관하게 즉시
+
+    # 근거가 임상 지침에 있는 종류. 화면에서 '탐색용'과 구분해 표시한다.
+    CLINICAL_KINDS = (KIND_DURATION, KIND_URGENT)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(50))            # 예: "이상 징후"
     condition_text: Mapped[str] = mapped_column(String(100))  # 예: "기침 ≥ 10회 / 1시간"
     target_text: Mapped[str] = mapped_column(String(50), default="전체 화자")
-    channels_text: Mapped[str] = mapped_column(String(100), default="보호자 웹훅 · 관리자 웹훅")
+    # 실제로 알림이 도달하는 경로만 적는다. 웹훅 전송은 아직 구현하지 않았으므로
+    # (alert_engine에 자리만 있음) "웹훅 발송"이라고 표시하면 화면이 거짓을 말하게 된다.
+    channels_text: Mapped[str] = mapped_column(String(100), default="대시보드 표시")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
@@ -86,6 +117,41 @@ class AlertRule(Base):
     night_start_hour: Mapped[int] = mapped_column(Integer, default=22)   # 현지 시각 기준
     night_end_hour: Mapped[int] = mapped_column(Integer, default=6)
     cooldown_minutes: Mapped[int] = mapped_column(Integer, default=30)   # 재알림 억제
+
+    # --- 변화 경고(KIND_BASELINE) ---
+    baseline_days: Mapped[int] = mapped_column(Integer, default=7)        # 기준선 학습 창
+    ratio_threshold: Mapped[float] = mapped_column(Float, default=2.0)    # 기준선 대비 배수
+    sustain_hours: Mapped[int] = mapped_column(Integer, default=24)       # 증가가 이어져야 하는 시간
+
+    # --- 기간 경고(KIND_DURATION) ---
+    duration_days: Mapped[int] = mapped_column(Integer, default=14)
+    # 기침 없는 날이 이 일수를 넘으면 '한 번 멎었다'로 보고 지속일수를 리셋한다.
+    allowed_gap_days: Mapped[int] = mapped_column(Integer, default=2)
+
+
+class SymptomReport(Base):
+    """사용자·보호자가 입력하는 동반 증상 (P6).
+
+    참고자료: 객혈·호흡곤란·청색증·지속적 흉통·의식저하·낮은 SpO₂가 있으면
+    기침 횟수와 무관하게 즉시 진료해야 한다. 이 값들은 소리로 알 수 없으므로
+    사람이 입력하는 경로가 반드시 필요하다.
+
+    증상 코드는 core/guidance.py의 SYMPTOM_LABELS 키를 쉼표로 이어 붙인다.
+    """
+
+    __tablename__ = "symptom_reports"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    person_id: Mapped[Optional[int]] = mapped_column(ForeignKey("persons.id"), nullable=True)
+    reported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    symptoms: Mapped[str] = mapped_column(String(255), default="")   # 쉼표 구분 코드
+    spo2: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    temperature_c: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    respiratory_rate: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    note: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
+    def codes(self) -> list[str]:
+        return [c for c in (self.symptoms or "").split(",") if c]
 
 
 class User(Base):

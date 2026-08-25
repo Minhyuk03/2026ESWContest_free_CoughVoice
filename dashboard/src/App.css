@@ -675,3 +675,31 @@
 }
 
 .modal-actions .primary { margin-left: auto; }
+
+/* ---------- 면책 문구 · 알림 심각도 (P6) ---------- */
+/* 이 시스템은 진단하지 않는다. 어떤 화면에서 알림을 보든 그 사실이 함께 보여야 하므로
+   문구는 서버에서 내려받아 표시하고, 스타일은 눈에 띄되 알림 자체를 가리지 않게 둔다. */
+.disclaimer {
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  border-left: 3px solid var(--line);
+  background: var(--chip);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  border-radius: 4px;
+}
+
+.alert-banner.sev-info {
+  background: var(--chip);
+  color: var(--text);
+}
+.alert-banner.sev-info a { color: var(--text); }
+.alert-banner.sev-advisory {
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+.alert-banner.sev-advisory a { color: var(--warn); }
+
+.alert-item.sev-advisory { border-left: 3px solid var(--warn); padding-left: 10px; }
+.alert-item.sev-urgent { border-left: 3px solid var(--danger); padding-left: 10px; }

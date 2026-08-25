@@ -69,12 +69,15 @@ async def create_event(
     # 게이트와 식별은 동기 CPU 작업(torch)이다. async 핸들러 안에서 그대로 호출하면
     # 이벤트 루프가 막혀 처리 중에는 서버 전체가 멈춘다 — 실제로 기침 한 건을
     # 처리하는 동안 대시보드 로그인이 타임아웃됐다(2026-08-24). 스레드풀로 넘긴다.
-    is_cough, cough_score = await run_in_threadpool(gate.check, str(wav_path))
-    if not is_cough:
+    # analyze()는 한 번의 forward에서 판정 점수와 부가 지표(wheeze·gasp)를 함께 준다.
+    # 판정에 쓰는 것은 cough_score 하나뿐이고 나머지는 기록용이다(P6).
+    g = await run_in_threadpool(gate.analyze, str(wav_path))
+    if not g.is_cough:
         wav_path.unlink(missing_ok=True)
         response.status_code = 200
         return {"id": None, "rejected": True, "reason": "not_cough",
-                "cough_score": cough_score}
+                "cough_score": g.cough_score}
+    cough_score = g.cough_score
 
     # 등록 임베딩이 있는 화자만 후보로 넘긴다 (P3 — 스텁 교체)
     registry = [(p.id, p.embedding_ref)
@@ -92,6 +95,9 @@ async def create_event(
         similarity=result.similarity,
         peak_rms=m.get("peak_rms"),
         audio_path=str(wav_path),
+        cough_score=g.cough_score,
+        wheeze_prob=g.wheeze,
+        gasp_prob=g.gasp,
     )
     db.add(event)
     db.commit()
@@ -134,6 +140,10 @@ def list_events(
             "person_room": p.room if p else None,
             "similarity": e.similarity,
             "peak_rms": e.peak_rms,
+            "cough_score": e.cough_score,
+            # 미검증 부가 지표 — 판정에 쓰지 않는다(models.CoughEvent 참조)
+            "wheeze_prob": e.wheeze_prob,
+            "gasp_prob": e.gasp_prob,
         })
     return out
 

@@ -7,11 +7,14 @@ DB의 시각 컬럼은 전부 UTC(naive) 기준으로 저장된다 (SQLite가 tz
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from ..core import guidance
+from ..core.cough_metrics import burden, hourly_baseline
 from ..db import get_db
 from ..models import Alert, CoughEvent, Person
 
@@ -91,3 +94,41 @@ def by_person(db: Session = Depends(get_db)):
             rows.append({"person_id": pid, "alias": p.alias, "room": p.room, "count": 0})
     rows.append({"person_id": None, "alias": "미등록", "room": None, "count": unknown})
     return rows
+
+
+@router.get("/cough-burden", summary="기침 부담 지표 (참고자료 권고 지표)")
+def cough_burden(days: int = 7, person: Optional[int] = None, all_persons: bool = True,
+                 db: Session = Depends(get_db)):
+    """단순 일일 횟수 대신 참고자료가 기록을 권한 지표들을 돌려준다.
+
+    person을 주면 그 화자만, 주지 않으면 전체(all_persons=true)를 집계한다.
+    all_persons=false이고 person이 없으면 **미등록 화자 묶음**을 뜻한다.
+
+    응답의 unavailable은 "우리 구성으로는 낼 수 없는 지표"와 그 이유다. 빈칸을
+    0으로 채우지 않는 이유는 보고서에서 '측정했다'로 읽히지 않게 하기 위함이다.
+    """
+    b = burden(db, person_id=person, all_persons=all_persons and person is None, days=days)
+    out = b.to_dict()
+    out["person_id"] = person
+    out["disclaimer"] = guidance.DISCLAIMER
+    return out
+
+
+@router.get("/baseline", summary="개인 기준선 (시간대별 중앙값)")
+def baseline(days: int = 7, person: Optional[int] = None, all_persons: bool = True,
+             exclude_recent_hours: int = 0, db: Session = Depends(get_db)):
+    """참고자료: "건강하거나 안정된 7~14일의 시간대별 중앙값을 계산한다."
+
+    관측이 없는 시간대는 null로 남긴다 — 0으로 채우면 '관측이 없었다'와
+    '기침이 없었다'가 구분되지 않는다.
+    """
+    values = hourly_baseline(db, person_id=person,
+                             all_persons=all_persons and person is None,
+                             days=days, exclude_recent_hours=exclude_recent_hours)
+    return {
+        "days": days,
+        "person_id": person,
+        "hourly_median": values,
+        "note": "권고 학습 창은 7~14일이며, 안정된 기간의 값이어야 의미가 있습니다.",
+        "disclaimer": guidance.DISCLAIMER,
+    }

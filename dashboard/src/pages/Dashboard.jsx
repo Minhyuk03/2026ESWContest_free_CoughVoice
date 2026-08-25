@@ -23,6 +23,7 @@ export default function Dashboard() {
   const [byPerson, setByPerson] = useState([])
   const [events, setEvents] = useState([])
   const [alerts, setAlerts] = useState([])
+  const [disclaimer, setDisclaimer] = useState('')
   const [selected, setSelected] = useState(null)
 
   useEffect(() => {
@@ -41,7 +42,10 @@ export default function Dashboard() {
         setHourly(hr.counts)
         setByPerson(bp)
         setEvents(ev)
-        setAlerts(al)
+        // /alerts는 목록이 아니라 { items, disclaimer } 를 준다. 면책 문구를 화면이
+        // 따로 들고 있지 않도록 서버가 함께 내려주는 구조다(P6).
+        setAlerts(al.items || [])
+        setDisclaimer(al.disclaimer || '')
       } catch { /* 다음 폴링에서 재시도 */ }
     }
     poll()
@@ -58,14 +62,16 @@ export default function Dashboard() {
       <Topbar title="실시간 대시보드" deviceOnline={overview?.device_online} />
       <main className="page">
         {banner && (
-          <div className="alert-banner">
+          <div className={`alert-banner sev-${banner.severity || 'info'}`}>
             <span>
-              ⚠ {banner.rule}: {banner.person_room ? `${banner.person_room} ` : ''}
+              {banner.severity === 'urgent' ? '🚨' : '⚠'} {banner.rule}:{' '}
+              {banner.person_room ? `${banner.person_room} ` : ''}
               {banner.person_alias ? `${banner.person_alias}님 — ` : ''}{banner.message}
             </span>
             <Link to="/history">[이력 보기]</Link>
           </div>
         )}
+        {disclaimer && <p className="disclaimer">{disclaimer}</p>}
 
         <div className="stat-grid">
           <div className="card stat">
