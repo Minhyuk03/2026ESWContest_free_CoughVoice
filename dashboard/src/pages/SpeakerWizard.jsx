@@ -4,6 +4,7 @@ import { api, getServerUrl } from '../api'
 import Topbar from '../components/Topbar'
 
 const MIN_SAMPLES = 5
+const PAGE_SIZE = 8 // 후보 목록 한 페이지에 보여줄 기침 수
 const STEPS = ['1. 별칭 입력', '2. 기침 샘플 선택', '3. 확인 및 완료']
 
 // 등록 샘플은 실제 장치가 보낸 기침 이벤트에서 고른다. 브라우저 마이크로 녹음하면
@@ -28,6 +29,7 @@ export default function SpeakerWizard() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [busy, setBusy] = useState(false)
+  const [page, setPage] = useState(1)
 
   useEffect(() => {
     if (!reenrollId) return
@@ -40,7 +42,7 @@ export default function SpeakerWizard() {
   const loadEvents = useCallback(() => {
     setLoading(true)
     api('/events?limit=40')
-      .then((list) => setEvents(list))
+      .then((list) => { setEvents(list); setPage(1) })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false))
   }, [])
@@ -100,6 +102,12 @@ export default function SpeakerWizard() {
     (step === 1 && picked.length >= MIN_SAMPLES) ||
     step === 2
 
+  // 후보 목록 페이지네이션
+  const pageCount = Math.max(1, Math.ceil(events.length / PAGE_SIZE))
+  const curPage = Math.min(page, pageCount)
+  const pageStart = (curPage - 1) * PAGE_SIZE
+  const pageItems = events.slice(pageStart, pageStart + PAGE_SIZE)
+
   return (
     <>
       <Topbar title={`화자 관리 › ${reenrollId ? '재등록' : '신규 등록'}`} />
@@ -136,9 +144,14 @@ export default function SpeakerWizard() {
                   {loading ? '불러오는 중…' : '↻ 목록 새로고침'}
                 </button>
               </div>
-              <div className="alert-list">
-                {events.map((e) => (
-                  <label key={e.id} className="alert-item" style={{ cursor: 'pointer' }}>
+              <div className="alert-list enroll-list">
+                {pageItems.map((e, i) => (
+                  <label
+                    key={e.id}
+                    className={`alert-item${picked.includes(e.id) ? ' picked' : ''}`}
+                    style={{ cursor: 'pointer' }}
+                  >
+                    <span className="enroll-num">{pageStart + i + 1}</span>
                     <input
                       type="checkbox"
                       checked={picked.includes(e.id)}
@@ -163,6 +176,13 @@ export default function SpeakerWizard() {
                   <p className="muted">아직 수신된 기침이 없습니다. 장치 앞에서 기침해 보세요.</p>
                 )}
               </div>
+              {events.length > PAGE_SIZE && (
+                <div className="pagination">
+                  <button type="button" disabled={curPage <= 1} onClick={() => setPage(curPage - 1)}>‹ 이전</button>
+                  <span>{curPage} / {pageCount} 페이지 · 총 {events.length}개</span>
+                  <button type="button" disabled={curPage >= pageCount} onClick={() => setPage(curPage + 1)}>다음 ›</button>
+                </div>
+              )}
             </div>
           )}
 

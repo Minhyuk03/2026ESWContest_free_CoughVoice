@@ -7,6 +7,7 @@
   --card: #ffffff;
   --chip: #ededf2;
   --line: #e4e4ea;
+  --row-alt: #f4f4f8; /* 표·목록 교차 줄 배경 */
   --text: #262933;
   --muted: #737885;
   --danger-bg: #fae5e5;

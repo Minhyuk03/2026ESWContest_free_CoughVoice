@@ -14,6 +14,8 @@ const PERIODS = [
 const SERIES_COLORS = ['#0072B2', '#E69F00', '#009E73', '#D55E00', '#CC79A7', '#56B4E9', '#8064A2']
 const UNKNOWN_COLOR = '#9aa0ad' // 미등록은 중립 회색 — 특정 화자와 헷갈리지 않게
 
+const PAGE_SIZE = 20 // 이력 표 한 페이지에 보여줄 행 수
+
 function fmt(iso) {
   const d = new Date(iso)
   const p = (n) => String(n).padStart(2, '0')
@@ -27,6 +29,7 @@ export default function History() {
   const [personFilter, setPersonFilter] = useState('all')
   const [includeUnknown, setIncludeUnknown] = useState(true)
   const [selected, setSelected] = useState(null)
+  const [page, setPage] = useState(1)
   const playerRef = useRef(null)
 
   useEffect(() => {
@@ -52,6 +55,13 @@ export default function History() {
       return String(e.person_id) === personFilter
     })
   }, [events, period, personFilter, includeUnknown])
+
+  // 페이지네이션 — 필터가 바뀌면 1페이지로 되돌린다
+  useEffect(() => { setPage(1) }, [period, personFilter, includeUnknown])
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  const curPage = Math.min(page, pageCount)
+  const pageStart = (curPage - 1) * PAGE_SIZE
+  const pageItems = filtered.slice(pageStart, pageStart + PAGE_SIZE)
 
   // 화자별·일자별 집계 → 화자마다 하나의 라인
   const { series, days } = useMemo(() => {
@@ -200,15 +210,17 @@ export default function History() {
         </div>
 
         <div className="card table-card">
-          <table className="data-table">
+          <table className="data-table zebra">
             <thead>
               <tr>
+                <th className="row-num">#</th>
                 <th>시각</th><th>화자</th><th>신뢰도</th><th>DOA(방향)</th><th>상태</th><th>오디오</th>
               </tr>
             </thead>
             <tbody>
-              {filtered.map((e) => (
+              {pageItems.map((e, i) => (
                 <tr key={e.id} onClick={() => setSelected(e)}>
+                  <td className="row-num">{pageStart + i + 1}</td>
                   <td>{fmt(e.captured_at)}</td>
                   <td>
                     {e.person_alias ? (
@@ -232,10 +244,17 @@ export default function History() {
                 </tr>
               ))}
               {filtered.length === 0 && (
-                <tr><td colSpan={6} className="muted">조건에 맞는 이벤트가 없습니다.</td></tr>
+                <tr><td colSpan={7} className="muted">조건에 맞는 이벤트가 없습니다.</td></tr>
               )}
             </tbody>
           </table>
+          {filtered.length > PAGE_SIZE && (
+            <div className="pagination">
+              <button type="button" disabled={curPage <= 1} onClick={() => setPage(curPage - 1)}>‹ 이전</button>
+              <span>{curPage} / {pageCount} 페이지 · 총 {filtered.length}건</span>
+              <button type="button" disabled={curPage >= pageCount} onClick={() => setPage(curPage + 1)}>다음 ›</button>
+            </div>
+          )}
         </div>
         <audio ref={playerRef} preload="none" />
       </main>
