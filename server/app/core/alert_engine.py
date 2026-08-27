@@ -222,6 +222,46 @@ class AlertEngine:
                 guidance.SEV_URGENT,
                 "CDC 호흡기 응급징후 · NHS 객혈 안내")
 
+    # --------------------------------------------------------- 시험 실행
+    def dry_run(self, db: Session, rule: AlertRule) -> List[dict]:
+        """규칙을 **지금 시각 기준으로** 평가해 보고 결과만 돌려준다 (알림 생성 없음).
+
+        같은 판정 코드를 그대로 태워야 화면의 "시험 실행" 결과와 실제 동작이 어긋나지
+        않는다. 그래서 세션에 넣지 않은 임시 CoughEvent(현재 시각·해당 화자)를 만들어
+        평가 경로에 넘긴다 — DB에 추가하지 않으므로 기침 횟수에 섞이지 않는다.
+
+        쿨다운은 적용하지 않는다. 시험의 질문은 "지금 조건을 만족하는가"이지
+        "방금 울렸으니 참는가"가 아니다. 응답 note에 그 사실을 적어 보낸다.
+        """
+        now = datetime.now(timezone.utc)
+        persons = db.scalars(select(Person)).all()
+        # 미등록 묶음(person_id=None)도 하나의 대상으로 본다 — 규칙이 그렇게 센다.
+        targets: List[tuple] = [(p.id, p) for p in persons] + [(None, None)]
+
+        out: List[dict] = []
+        for person_id, person in targets:
+            if not self._targets(rule, person):
+                continue
+            probe = CoughEvent(person_id=person_id, captured_at=utc_naive(now),
+                               device_id="(시험)", audio_path="")
+            if rule.kind == AlertRule.KIND_URGENT:
+                report = db.scalar(
+                    select(SymptomReport)
+                    .where(SymptomReport.person_id.is_(None) if person_id is None
+                           else SymptomReport.person_id == person_id)
+                    .order_by(SymptomReport.reported_at.desc()).limit(1))
+                verdict = self._check_symptom(rule, report) if report else None
+            else:
+                verdict = self._check_event(db, rule, probe, person)
+            out.append({
+                "person_id": person_id,
+                "label": (self._who(person) if person is not None else "미등록 화자"),
+                "would_fire": verdict is not None,
+                "message": verdict[0] if verdict else None,
+                "severity": verdict[1] if verdict else None,
+            })
+        return out
+
     # ------------------------------------------------------------------ 집계
     def _count_recent(self, db: Session, event: CoughEvent, window_minutes: int,
                       night: bool, rule: AlertRule) -> int:

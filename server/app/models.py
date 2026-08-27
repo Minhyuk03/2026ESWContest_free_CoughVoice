@@ -42,6 +42,10 @@ class CoughEvent(Base):
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     person_id: Mapped[Optional[int]] = mapped_column(ForeignKey("persons.id"), nullable=True)  # None = unknown
     similarity: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # 화자를 누가 정했는가. 사람이 손으로 지정하면 similarity는 **그 이전 모델 점수**라
+    # 지금 라벨과 아무 관계가 없다. 구분해 두지 않으면 화면이 "s02 · 93%"처럼
+    # 있지도 않은 확신을 말하게 된다(2026-08-28 실제로 그렇게 보였다).
+    person_source: Mapped[str] = mapped_column(String(10), default="model")  # model | manual
     peak_rms: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     audio_path: Mapped[str] = mapped_column(String(255))  # 저장된 wav 경로
     # 등록(enroll-from-events)에 쓰인 이벤트. 보존 정책(NFR-06, 기본 7일)이 원음을
@@ -80,6 +84,21 @@ class Alert(Base):
     severity: Mapped[str] = mapped_column(String(10), default="info")
     # 경계값의 임상 출처. 근거 있는 값과 탐색용 값을 화면에서 구분하기 위해 남긴다.
     source: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+
+    # --- 후속 조치 상태 ---
+    # 알림을 띄우기만 하면 "누가 봤고 무엇을 했는가"가 어디에도 남지 않는다. 교대 근무가
+    # 있는 현장에서는 같은 알림을 두 사람이 각자 확인하거나, 아무도 확인하지 않은 채
+    # 목록에서 밀려난다. 상태·담당자·확인 시각·메모를 알림 자체에 붙여 둔다.
+    STATUS_OPEN = "open"    # 미확인
+    STATUS_ACK = "ack"      # 확인함 (사람이 보았다)
+    STATUS_DONE = "done"    # 조치 완료
+    STATUSES = (STATUS_OPEN, STATUS_ACK, STATUS_DONE)
+
+    status: Mapped[str] = mapped_column(String(10), default=STATUS_OPEN)
+    # 확인·조치한 관리자 계정. 상태가 미확인으로 되돌아가면 함께 비운다.
+    assignee: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    acked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    note: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
 
 
 class AlertRule(Base):
@@ -133,6 +152,25 @@ class AlertRule(Base):
     duration_days: Mapped[int] = mapped_column(Integer, default=14)
     # 기침 없는 날이 이 일수를 넘으면 '한 번 멎었다'로 보고 지속일수를 리셋한다.
     allowed_gap_days: Mapped[int] = mapped_column(Integer, default=2)
+
+
+class AlertRuleChange(Base):
+    """알림 규칙 변경 이력.
+
+    규칙은 알림이 언제 울릴지를 정하는 값이라, 조용해진 이유가 "기침이 줄어서"인지
+    "누가 규칙을 껐거나 기준을 올려서"인지 구분할 수 있어야 한다. 변경 시점의 요약과
+    누가 바꿨는지를 남긴다. 규칙 행이 지워져도 이력은 남도록 FK를 걸지 않는다.
+    """
+
+    __tablename__ = "alert_rule_changes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    rule_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    rule_name: Mapped[str] = mapped_column(String(50), default="")
+    action: Mapped[str] = mapped_column(String(20), default="update")  # create|update|duplicate
+    summary: Mapped[str] = mapped_column(String(300), default="")      # "기준 10회 → 12회" 식
+    actor: Mapped[str] = mapped_column(String(50), default="—")        # 변경한 관리자 계정
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class SymptomReport(Base):
