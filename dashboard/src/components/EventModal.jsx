@@ -1,18 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api, audioUrl } from '../api'
-
-const THRESHOLD = 0.75 // 식별 임계치 (P3 튜닝 전 잠정값)
-
-function fmt(iso) {
-  const d = new Date(iso)
-  const p = (n) => String(n).padStart(2, '0')
-  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
-}
+import Confidence from './Confidence'
+import { THRESHOLD, confidence, fmtDateTime, speakerLabel } from '../lib/format'
 
 /* 오디오를 내려받아 실제 파형 막대를 그린다. 실패하면 막대를 숨긴다. */
-function useWaveform(eventId) {
+function useWaveform(eventId, enabled) {
   const [bars, setBars] = useState(null)
   useEffect(() => {
+    if (!enabled) { setBars(null); return undefined }
     let alive = true
     async function load() {
       try {
@@ -42,25 +37,26 @@ function useWaveform(eventId) {
     }
     load()
     return () => { alive = false }
-  }, [eventId])
+  }, [eventId, enabled])
   return bars
 }
 
 export default function EventModal({ event, onClose }) {
   const [persons, setPersons] = useState([])
   const [personId, setPersonId] = useState(event.person_id ?? '')
+  const [policy, setPolicy] = useState(null)
   const [note, setNote] = useState(null)
   const audioRef = useRef(null)
-  const bars = useWaveform(event.id)
+  // 원음은 보존 기간이 지나면 삭제된다. 없는 파일에 재생 버튼을 띄우지 않는다.
+  const hasAudio = event.audio_available !== false
+  const bars = useWaveform(event.id, hasAudio)
 
   useEffect(() => {
     api('/persons').then(setPersons).catch(() => {})
+    api('/audio-policy').then(setPolicy).catch(() => {})
   }, [])
 
-  const simPct = useMemo(
-    () => (event.similarity != null ? Math.min(100, event.similarity * 100) : null),
-    [event.similarity],
-  )
+  const conf = useMemo(() => confidence(event.similarity), [event.similarity])
 
   async function savePerson() {
     try {
@@ -68,7 +64,8 @@ export default function EventModal({ event, onClose }) {
         method: 'PATCH',
         body: { person_id: personId === '' ? null : Number(personId) },
       })
-      setNote('화자 수정 완료 — 목록은 다음 갱신 때 반영됩니다')
+      setNote('화자를 바꿨습니다 — 목록은 다음 갱신 때 반영됩니다. '
+              + '다음 기침부터 자동으로 인식하게 하려면 화자 관리에서 재등록하세요.')
     } catch (e) {
       setNote(`실패: ${e.message}`)
     }
@@ -78,7 +75,7 @@ export default function EventModal({ event, onClose }) {
     <div className="modal-back" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
-          <h3>이벤트 상세 — {fmt(event.captured_at)}</h3>
+          <h3>이벤트 상세 — {fmtDateTime(event.captured_at)}</h3>
           <button type="button" className="linklike" onClick={onClose}>✕</button>
         </div>
 
@@ -87,39 +84,65 @@ export default function EventModal({ event, onClose }) {
             ? bars.map((v, i) => (
                 <div key={i} className="wave-bar" style={{ height: `${Math.max(6, v * 100)}%` }} />
               ))
-            : <p className="muted">파형을 불러올 수 없습니다 (오디오 없음)</p>}
+            : (
+              <p className="muted">
+                {hasAudio ? '파형을 불러올 수 없습니다' : '보존 기간이 지나 소리가 삭제되었습니다'}
+              </p>
+            )}
         </div>
 
         <div className="modal-row">
-          <button type="button" className="primary" onClick={() => audioRef.current?.play()}>▶ 재생</button>
-          <audio ref={audioRef} src={audioUrl(event.id)} preload="none" />
+          {hasAudio ? (
+            <>
+              <button type="button" className="primary" onClick={() => audioRef.current?.play()}>듣기</button>
+              <audio ref={audioRef} src={audioUrl(event.id)} preload="none" />
+            </>
+          ) : (
+            <span className="muted small">이 이벤트의 소리는 더 이상 재생할 수 없습니다.</span>
+          )}
           <span className="muted small">16kHz mono · peak RMS {event.peak_rms ?? '–'}</span>
         </div>
+        {policy?.enabled && (
+          <p className="muted small">
+            재생되는 소리는 이 장치가 녹음한 기침 구간이며, {policy.retention_days}일 뒤 자동으로 삭제됩니다.
+            {event.enrolled && ' 이 이벤트는 화자 등록에 사용되어 재등록을 위해 계속 보관됩니다.'}
+          </p>
+        )}
 
         <h4>식별 결과</h4>
-        <p>화자: {event.person_alias ? `${event.person_alias}${event.person_room ? ` (${event.person_room})` : ''}` : '미등록'}</p>
-        <p className="muted small">
-          코사인 유사도 {event.similarity != null ? event.similarity.toFixed(2) : '–'} / 임계치 {THRESHOLD}
-        </p>
+        <p>화자: {speakerLabel(event)}</p>
+        <div className="modal-conf">
+          <Confidence value={event.similarity} source={event.person_source} />
+          <span className="muted small">
+            {event.person_source === 'manual'
+              ? `사람이 지정한 화자입니다. 모델이 냈던 점수는 ${conf.pct != null ? `${conf.pct}%` : '없음'}이며, 지정 이전 값이라 지금 라벨의 확신도가 아닙니다.`
+              : `식별 기준 ${Math.round(THRESHOLD * 100)}% 이상일 때만 등록 화자로 판정합니다`}
+            {event.person_source !== 'manual' && conf.level === 'mid'
+              && ' — 기준을 겨우 넘긴 값이라 확인을 권합니다'}
+          </span>
+        </div>
         <div className="sim-track">
-          {simPct != null && <div className="sim-fill" style={{ width: `${simPct}%` }} />}
+          {conf.pct != null && (
+            <div className={`sim-fill conf-${conf.level}`} style={{ width: `${conf.pct}%` }} />
+          )}
           <div className="sim-threshold" style={{ left: `${THRESHOLD * 100}%` }} />
         </div>
         <p className="muted small">
-          디바이스: {event.device_id} · 상태: {event.person_alias ? '등록 화자' : '미등록'}
+          기기: {event.device_id} · 판정: {event.person_alias ? '등록 화자' : '미등록'}
+          {event.cough_score != null && ` · 기침 확신도 ${Math.round(event.cough_score * 100)}%`}
         </p>
 
         <div className="modal-actions">
-          <select value={personId} onChange={(e) => setPersonId(e.target.value)}>
-            <option value="">미등록</option>
-            {persons.map((p) => (
-              <option key={p.id} value={p.id}>{p.alias}{p.room ? ` (${p.room})` : ''}</option>
-            ))}
-          </select>
+          <label className="field">
+            <span className="field-label">화자 지정</span>
+            <select value={personId} onChange={(e) => setPersonId(e.target.value)}>
+              <option value="">미등록</option>
+              {persons.map((p) => (
+                <option key={p.id} value={p.id}>{p.alias}{p.room ? ` (${p.room})` : ''}</option>
+              ))}
+            </select>
+          </label>
           <button type="button" onClick={savePerson}>화자 수정 (오식별 보정)</button>
-          <button type="button" onClick={() => setNote('재학습 큐에 등록되었습니다 (P3 모델 연동 예정)')}>
-            이 샘플로 재학습 큐 등록
-          </button>
           <button type="button" className="primary" onClick={onClose}>닫기</button>
         </div>
         {note && <p className="muted small">{note}</p>}

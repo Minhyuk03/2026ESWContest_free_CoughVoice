@@ -29,7 +29,15 @@ export default function Login() {
   return (
     <div className="login-wrap">
       <form className="login-card" onSubmit={submit}>
-        <div className="login-logo">🎙️</div>
+        {/* 이모지 대신 음성 파형을 그린 표식 — 글꼴·플랫폼에 따라 달라지지 않는다 */}
+        <div className="login-logo" aria-hidden="true">
+          <svg viewBox="0 0 40 24" width="40" height="24">
+            {[6, 12, 20, 14, 8].map((h, i) => (
+              <rect key={i} x={i * 8 + 2} y={(24 - h) / 2} width="4" height={h}
+                    rx="2" fill="currentColor" />
+            ))}
+          </svg>
+        </div>
         <h1>기침 화자 식별 시스템</h1>
         <p className="muted">관리자 · 보호자 로그인</p>
         <input

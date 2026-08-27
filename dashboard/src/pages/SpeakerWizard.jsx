@@ -141,7 +141,7 @@ export default function SpeakerWizard() {
               <div className="page-head">
                 <p>선택: <b>{picked.length}</b> / 최소 {MIN_SAMPLES}</p>
                 <button type="button" onClick={loadEvents} disabled={loading}>
-                  {loading ? '불러오는 중…' : '↻ 목록 새로고침'}
+                  {loading ? '불러오는 중…' : '목록 새로고침'}
                 </button>
               </div>
               <div className="alert-list enroll-list">
@@ -168,7 +168,7 @@ export default function SpeakerWizard() {
                       </p>
                     </div>
                     <button type="button" onClick={(ev) => { ev.preventDefault(); play(e.id) }}>
-                      ▶ 듣기
+                      듣기
                     </button>
                   </label>
                 ))}
