@@ -110,55 +110,25 @@ def load_audio(wav: str, crop: bool) -> np.ndarray:
     return normalize_rms(x)
 
 
-class EcapaBackbone:
-    """기존 운영 백본 — 대조군. 투영 전 원본 192차원."""
-    name = "ecapa"
-    dim = 192
-
-    def __init__(self):
-        from app.ml.identifier import SpeakerIdentifier
-        self.model = SpeakerIdentifier()._ensure_model()
-
-    def embed(self, xs):
-        out = []
-        for x in xs:
-            t = torch.from_numpy(np.ascontiguousarray(x)).unsqueeze(0)
-            with torch.no_grad():
-                e = self.model.encode_batch(t).squeeze().cpu().numpy()
-            out.append(e.astype(np.float32))
-        return np.stack(out)
+def make_backbone(name: str, model_id=None):
+    """공용 백본을 그대로 쓴다 — 평가와 운영이 다른 임베더를 쓰는 사고를 막기 위함."""
+    from app.ml.backbone import BACKENDS as IMPL, get_backbone
+    if model_id and name == "wavlm":
+        return IMPL["wavlm"](model_id=model_id)       # 체크포인트 비교용
+    return get_backbone(name)
 
 
-class WavLMBackbone:
-    """WavLM-base-plus-sv (WavLM + x-vector 헤드, 512차원).
-
-    ECAPA보다 최신·대형 사전학습이지만 학습 데이터는 여전히 발성 음성이다.
-    기침에 성대 성분이 적다는 점은 그대로라 기대치를 높게 잡지 않는다.
-    """
-    name = "wavlm"
-    dim = 512
-
-    def __init__(self, model_id: str = WAVLM_MODEL, batch: int = 8):
-        # AutoModel 로 받으면 WavLM / UniSpeech-SAT 체크포인트를 같은 코드로 쓴다.
-        from transformers import AutoFeatureExtractor, AutoModelForAudioXVector
-        self.fe = AutoFeatureExtractor.from_pretrained(model_id)
-        self.model = AutoModelForAudioXVector.from_pretrained(model_id)
-        self.model.eval()
-        self.batch = batch
-
-    def embed(self, xs):
-        out = []
-        for i in range(0, len(xs), self.batch):
-            chunk = [np.asarray(x, dtype=np.float32) for x in xs[i:i + self.batch]]
-            inp = self.fe(chunk, sampling_rate=TARGET_RATE,
-                          return_tensors="pt", padding=True)
-            with torch.no_grad():
-                out.append(self.model(**inp).embeddings.cpu().numpy())
-            print(f"  {min(i + self.batch, len(xs))}/{len(xs)}", flush=True)
-        return np.concatenate(out).astype(np.float32)
+def embed_all(backbone, xs):
+    out = []
+    for i, x in enumerate(xs, 1):
+        t = torch.from_numpy(np.ascontiguousarray(x)).unsqueeze(0)
+        out.append(backbone.encode(t))
+        if i % 20 == 0:
+            print(f"  {i}/{len(xs)}", flush=True)
+    return np.stack(out)
 
 
-BACKBONES = {"ecapa": EcapaBackbone, "wavlm": WavLMBackbone}
+BACKENDS = ("ecapa", "wavlm")
 
 
 # ---------------------------------------------------------------- 평가
@@ -183,7 +153,7 @@ def main():
     ap.add_argument("--archive", required=True,
                     help="cough_id.db + audio_store/ + 라벨 JSON 이 든 폴더")
     ap.add_argument("--labels", default=None, help="라벨 JSON (기본: 아카이브 안에서 탐색)")
-    ap.add_argument("--backbone", default="wavlm", choices=sorted(BACKBONES))
+    ap.add_argument("--backbone", default="wavlm", choices=sorted(BACKENDS))
     ap.add_argument("--model", default=None,
                     help="wavlm 백본의 체크포인트 교체 (기본 microsoft/wavlm-base-plus-sv)")
     ap.add_argument("--enroll", type=int, default=0, metavar="N",
@@ -222,10 +192,9 @@ def main():
     todo = [(ev, wav) for _, _, ev, wav in pairs if str(ev) not in cache]
     if todo:
         print(f"임베딩 추출 {len(todo)}개 (캐시 {len(cache)}개)...", flush=True)
-        kw = {"model_id": args.model} if (args.model and args.backbone == "wavlm") else {}
-        backbone = BACKBONES[args.backbone](**kw)
+        backbone = make_backbone(args.backbone, args.model)
         xs = [load_audio(wav, crop) for _, wav in todo]
-        embs = backbone.embed(xs)
+        embs = embed_all(backbone, xs)
         for (ev, _), e in zip(todo, embs):
             cache[str(ev)] = e
         os.makedirs(CACHE_DIR, exist_ok=True)
@@ -249,10 +218,15 @@ def main():
     if not usable:
         sys.exit("블록이 2개 이상인 화자가 없습니다 — 블록 간 동일인 쌍을 만들 수 없습니다.")
 
-    # 중심화: 평가셋 전체 평균 차감. 외부 평균이 아니므로 **낙관적**일 수 있다.
+    # 외부(Coswara) 중심화 = 운영에서 실제로 쓰는 보정. 평가셋 중심화는 참고치다
+    # (시험 데이터의 평균을 미리 본 값이라 낙관적이고, 서버에서는 재현 불가능하다).
+    from app.ml.centering import Centering
+    ext = Centering(args.backbone)
     mu = np.concatenate(list(by_block.values())).mean(axis=0)
-    transforms = [("원본 코사인", lambda A: A),
-                  ("평가셋 중심화", lambda A: A - mu)]
+    transforms = [("원본 코사인", lambda A: A)]
+    if ext.available:
+        transforms.append(("Coswara 중심화", ext.apply))
+    transforms.append(("평가셋 중심화(참고)", lambda A: A - mu))
 
     print("\n=== 화자 내 일관성 ===")
     print("  블록 내부가 높고 블록 간이 타인 수준이면 = 화자가 아니라 채널을 재고 있는 것")
