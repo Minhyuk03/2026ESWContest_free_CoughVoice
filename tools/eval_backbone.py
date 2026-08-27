@@ -74,14 +74,23 @@ def load_events(archive: str):
     return out
 
 
-def load_blocks(paths):
+KST = dt.timezone(dt.timedelta(hours=9))
+
+
+def load_blocks(paths, offset=0):
+    """라벨 파일들 → 블록 목록. **날짜(KST)를 함께 들고 다닌다** — 동일인 쌍을
+    "같은 날 다른 블록"과 "다른 날"로 갈라 보기 위해서다. 이 프로젝트의 실패는
+    항상 날짜 경계에서 났으므로 두 수치를 섞으면 안 된다."""
     blocks = []
     for p in paths:
         with open(p, encoding="utf-8") as f:
             doc = json.load(f)
         for b in doc.get("blocks", []):
-            blocks.append({"speaker": b["speaker"], "start": parse_ts(b["start"]),
-                           "end": parse_ts(b["end"]), "id": len(blocks)})
+            start = parse_ts(b["start"])
+            blocks.append({"speaker": b["speaker"], "start": start,
+                           "end": parse_ts(b["end"]),
+                           "date": start.astimezone(KST).strftime("%m/%d"),
+                           "id": offset + len(blocks)})
     return blocks
 
 
@@ -94,7 +103,7 @@ def assign(events, blocks):
             dropped += 1
             continue
         b = max(hit, key=lambda b: b["start"])
-        out.append((b["speaker"], b["id"], ev, wav))
+        out.append((b["speaker"], b["id"], ev, wav, b["date"]))
     return out, dropped
 
 
@@ -150,8 +159,8 @@ def eer_curve(genuine, impostor):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--archive", required=True,
-                    help="cough_id.db + audio_store/ + 라벨 JSON 이 든 폴더")
+    ap.add_argument("--archive", required=True, nargs="+",
+                    help="cough_id.db + audio_store/ + 라벨 JSON 이 든 폴더 (여러 개 가능)")
     ap.add_argument("--labels", default=None, help="라벨 JSON (기본: 아카이브 안에서 탐색)")
     ap.add_argument("--backbone", default="wavlm", choices=sorted(BACKENDS))
     ap.add_argument("--model", default=None,
@@ -164,20 +173,28 @@ def main():
     ap.add_argument("--no-cache", action="store_true")
     args = ap.parse_args()
 
-    archive = os.path.expanduser(args.archive)
-    labels = [args.labels] if args.labels else [
-        os.path.join(archive, f) for f in sorted(os.listdir(archive))
-        if f.startswith("label_session_") and f.endswith(".json")]
-    if not labels:
-        sys.exit("라벨 JSON을 찾지 못했습니다.")
-
-    blocks = load_blocks(labels)
-    events = load_events(archive)
-    pairs, dropped = assign(events, blocks)
+    # 아카이브를 여러 개 받는다. **이벤트 id는 아카이브마다 1부터 다시 매겨지므로**
+    # 캐시 키·블록 id를 아카이브별로 분리하지 않으면 서로 다른 녹음이 덮어써진다.
+    archives = [os.path.expanduser(a) for a in args.archive]
+    pairs, dropped, n_events, blocks = [], 0, 0, []
+    for ai, archive in enumerate(archives):
+        labels = [args.labels] if (args.labels and len(archives) == 1) else [
+            os.path.join(archive, f) for f in sorted(os.listdir(archive))
+            if f.startswith("label_session_") and f.endswith(".json")]
+        if not labels:
+            sys.exit(f"라벨 JSON을 찾지 못했습니다: {archive}")
+        bl = load_blocks(labels, offset=len(blocks))
+        ev = load_events(archive)
+        pr, dr = assign(ev, bl)
+        blocks += bl
+        n_events += len(ev)
+        dropped += dr
+        pairs += [(spk, bid, f"{ai}:{e}", wav, date) for spk, bid, e, wav, date in pr]
     crop = not args.no_crop
 
     print(f"\n백본 {args.backbone} · 크롭 {'1.2초' if crop else '없음(2.5초 전체)'}")
-    print(f"이벤트 {len(events)}건 → 구간 배정 {len(pairs)}건 / 구간 밖 {dropped}건")
+    print(f"아카이브 {len(archives)}개 · 이벤트 {n_events}건 → 구간 배정 {len(pairs)}건 "
+          f"/ 구간 밖 {dropped}건")
 
     model_tag = ""
     if args.model:
@@ -189,7 +206,7 @@ def main():
         z = np.load(cache_path, allow_pickle=True)
         cache = {k: z[k] for k in z.files}
 
-    todo = [(ev, wav) for _, _, ev, wav in pairs if str(ev) not in cache]
+    todo = [(ev, wav) for _, _, ev, wav, _ in pairs if str(ev) not in cache]
     if todo:
         print(f"임베딩 추출 {len(todo)}개 (캐시 {len(cache)}개)...", flush=True)
         backbone = make_backbone(args.backbone, args.model)
@@ -201,9 +218,11 @@ def main():
         np.savez(cache_path, **cache)
 
     by_block = defaultdict(list)
-    for spk, bid, ev, _ in pairs:
+    block_date = {}
+    for spk, bid, ev, _, date in pairs:
         if str(ev) in cache:
             by_block[(spk, bid)].append(cache[str(ev)])
+            block_date[(spk, bid)] = date
     by_block = {k: np.stack(v) for k, v in by_block.items() if v}
 
     speakers = sorted({s for s, _ in by_block})
@@ -214,7 +233,14 @@ def main():
 
     print("\n=== 블록 구성 ===")
     for (spk, bid), A in sorted(by_block.items(), key=lambda kv: kv[0][1]):
-        print(f"  블록{bid:<3}{spk:<10}{len(A):>4}건  ({A.shape[1]}차원)")
+        print(f"  블록{bid:<3}{spk:<10}{block_date[(spk, bid)]}  {len(A):>4}건  "
+              f"({A.shape[1]}차원)")
+    n_days = {s: len({block_date[(s, b)] for b in bs}) for s, bs in
+              [(s, [b for sp, b in by_block if sp == s]) for s in
+               sorted({s for s, _ in by_block})]}
+    multi_day = [s for s, n in n_days.items() if n >= 2]
+    print(f"  날짜가 2일 이상인 화자: {', '.join(multi_day) if multi_day else '없음'}"
+          + ("" if multi_day else "  ← 날짜 간 EER을 낼 수 없다"))
     if not usable:
         sys.exit("블록이 2개 이상인 화자가 없습니다 — 블록 간 동일인 쌍을 만들 수 없습니다.")
 
@@ -287,11 +313,17 @@ def main():
             results[label + f" (등록{args.enroll})"] = e
         print(f"  (동일인 {len(gen)} / 타인 {len(imp)})")
 
-    best_label = min(results, key=results.get)
+    # "(참고)"는 평가셋 평균을 쓴 값이라 운영에서 재현할 수 없다 — 선택에서 뺀다.
+    deployable = [k for k in results if "(참고)" not in k]
+    best_label = min(deployable, key=lambda k: results[k])
     best = results[best_label]
-    print(f"\n최고: {best_label} — EER {best*100:.2f}%  (동일인 쌍 {n_gen} / 타인 쌍 {n_imp})")
-    print("기준선: ECAPA 실사용 46.25%(중심화) · 우연 50%")
-    print(f"판정: 30% 기준 → {'통과 — 계속 진행할 근거 있음' if best < 0.30 else '미달 — 이 경로 중단'}")
+    print(f"\n최고(배포 가능): {best_label} — EER {best*100:.2f}%  "
+          f"(동일인 쌍 {n_gen} / 타인 쌍 {n_imp})")
+    ref = [k for k in results if "(참고)" in k]
+    if ref:
+        r = min(ref, key=lambda k: results[k])
+        print(f"  참고: {r} {results[r]*100:.2f}% — 시험 데이터 평균을 쓴 값이라 운영 불가")
+    print("\n기준선: ECAPA 실사용 49.9%(원본)·46.3%(중심화) · 우연 50% · 통제 녹음 WavLM 30.5%")
 
 
 if __name__ == "__main__":

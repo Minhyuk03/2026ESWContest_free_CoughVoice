@@ -17,7 +17,8 @@
 (s01 ses03과 s02 ses02는 다른 사람인데 16분 간격이라 유사도가 같은 사람 수준으로 나왔다).
 
 사용:
-    python3 tools/label_session.py --server http://192.168.219.134:8000
+    python3 tools/label_session.py            # 맥북에서 서버가 돌 때
+    python3 tools/label_session.py --server http://<서버IP>:8000
 """
 from __future__ import annotations
 
@@ -30,7 +31,8 @@ import time
 import urllib.request
 from datetime import datetime, timezone
 
-DEFAULT_SERVER = os.environ.get("COUGHID_SERVER", "http://192.168.219.134:8000")
+# 맥미니(192.168.219.134)는 2026-08-27부로 구성에서 제외했다. 서버는 맥북에서 돈다.
+DEFAULT_SERVER = os.environ.get("COUGHID_SERVER", "http://127.0.0.1:8000")
 
 
 def get(server: str, path: str, timeout: float = 10.0):
