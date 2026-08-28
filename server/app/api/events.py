@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from ..core.alert_engine import engine as alert_engine
 from ..db import get_db
 from .security import require_device_token
+from ..core import bout as bout_mod
 from ..ml.cough_gate import gate
 from ..ml.identifier import identifier
 from ..models import CoughEvent, Person
@@ -98,12 +99,22 @@ async def create_event(
     cap_aware = captured if captured.tzinfo is not None else captured.replace(tzinfo=timezone.utc)
     if cap_aware > now_utc + timedelta(minutes=2):
         captured = now_utc
+    # 상위 2인을 남긴다. 규약: person_id가 있으면 person_id/similarity = 1등,
+    # runner_up_* = 2등. person_id가 None(임계치 미달)이면 runner_up_* 에 **1등**을
+    # 넣는다 — 그러지 않으면 1등이 누구였는지가 사라져 발작 단위 재판정을 못 한다.
+    if result.person_id is None:
+        runner_id, runner_sim = result.top_id, result.similarity
+    else:
+        runner_id, runner_sim = result.runner_up_id, result.runner_up_similarity
+
     event = CoughEvent(
         event_id=event_id,
         device_id=m.get("device_id", "unknown"),
         captured_at=captured,
         person_id=result.person_id,
         similarity=result.similarity,
+        runner_up_id=runner_id,
+        runner_up_sim=runner_sim,
         peak_rms=m.get("peak_rms"),
         audio_path=str(wav_path),
         cough_score=g.cough_score,
@@ -114,9 +125,17 @@ async def create_event(
     db.commit()
     db.refresh(event)
 
+    # 발작 단위 재판정 — 클립 하나가 아니라 60초 안의 연속 기침을 묶어 화자를 정한다.
+    # 알림 평가보다 **먼저** 해야 한다. 알림은 화자별로 세므로, 판정이 바뀐 뒤에
+    # 세지 않으면 방금 이름이 붙은 앞선 기침들이 집계에서 빠진다.
+    bout = bout_mod.judge(db, event) if bout_mod.ENABLED else None
+    if bout is not None:
+        db.refresh(event)
+
     alerts = alert_engine.evaluate(db, event)   # P5 — 규칙 평가 (FR-07)
     return {"id": event.id, "person_id": event.person_id,
             "similarity": event.similarity, "cough_score": cough_score,
+            "bout": bout.as_dict() if bout else None,
             "alerts": [{"rule": a.rule, "message": a.message} for a in alerts]}
 
 

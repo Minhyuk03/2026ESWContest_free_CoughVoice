@@ -22,6 +22,7 @@ from .backbone import get_backbone
 from .centering import get_centering
 from .features import preprocess
 from .projection import projection
+from .tnorm import tnorm
 
 # 임계치 0.40 — **이 값이 근거하던 수치는 2026-08-26에 정정되었다.**
 #
@@ -53,15 +54,22 @@ _THRESHOLDS = {
     "ecapa": 0.40,
     # WavLM 0.75 — 2026-08-27 실사용 엣지 클립 실측. **단일-단일 EER 지점(0.597)을
     # 그대로 쓰면 안 된다.** 운용은 등록 템플릿(여러 개 평균) 대 단일 클립이라 유사도가
-    # 전반적으로 올라가고, 0.60에서는 FAR 76%가 나온다. 등록 템플릿 기준 실측 곡선:
-    #   0.60 → 재현율 96.2% / FAR 76.2% / 정밀도 38.7%
-    #   0.70 → 재현율 82.5% / FAR 40.0% / 정밀도 50.8%
-    #   0.75 → 재현율 67.5% / FAR 21.9% / 정밀도 60.7%   ← 곡선의 무릎. 현재 값
-    #   0.82 → 재현율 33.8% / FAR  6.2% / 정밀도 73.0%
-    #   0.85 → 재현율 13.8% / FAR  1.2% / 정밀도 84.6%
-    # 정밀도 우선 설계(잘못된 이름은 이력을 오염시키지만 unknown은 그렇지 않다)에 따라
-    # FAR이 가장 크게 꺾이는 지점을 골랐다. **타인 대조군이 화자 1명(160 트라이얼)뿐이라
-    # FAR 추정의 신뢰구간이 넓다** — 이 값은 잠정이며 화자를 늘려 재확정해야 한다.
+    # 전반적으로 올라가고, 0.60에서는 FAR 76%가 나온다.
+    #
+    # **2026-08-28 정정 — 아래 FAR은 타인이 1명뿐일 때의 값이었다.** 타인을 2명
+    # (hwang·choi 80건)으로 늘려 다시 재니 0.75의 FAR은 21.9%가 아니라 **37.5%**다
+    # (hwang 15% / choi 60% — 사람 하나로 이만큼 튄다). 갱신한 곡선:
+    #   임계치   재현율(8/28 s01 19건, 날짜 분리)   FAR(8/27 타인 80건)
+    #   0.75  →  89.5%                              37.5%
+    #   0.80  →  78.9%                              27.5%
+    #   0.85  →  63.2%                              12.5%
+    #   0.88  →  42.1%                               5.0%
+    # **어느 지점도 운용할 수 없다.** FAR을 쓸 만하게 낮추면 본인을 절반 넘게 놓친다.
+    # 이 임계치는 "미등록자를 거부하는 장치"가 아니며 그렇게 소개해서도 안 된다.
+    # 실제로 미등록자 40건 중 35건(87.5%)이 등록자 이름을 달았다.
+    #
+    # 쓸 수 있는 것은 **닫힌 집합**(등록 2인 중 택1)뿐이다 — core/bout.py 참조.
+    # 발작 단위(60초·3개 이상) + T-norm 으로 2026-08-28 날짜 분리 기준 정확도 100%.
     "wavlm": 0.75,
 }
 
@@ -78,9 +86,29 @@ DEFAULT_THRESHOLD = threshold_for(os.environ.get("COUGHID_BACKEND", "wavlm"))
 
 
 class IdentifyResult:
-    def __init__(self, person_id: Optional[int], similarity: Optional[float]):
+    """판정 결과.
+
+    similarity 는 **언제나 원본 코사인**이다. T-norm z-score를 여기에 넣으면
+    임계치(0.75)와 화면·문서의 모든 수치가 뜻을 잃는다. z는 순위와 마진에만 쓰고,
+    저장·표시는 코사인으로 한다.
+    """
+
+    def __init__(self, person_id: Optional[int], similarity: Optional[float],
+                 runner_up_id: Optional[int] = None,
+                 runner_up_similarity: Optional[float] = None,
+                 margin: Optional[float] = None,
+                 top_id: Optional[int] = None):
         self.person_id = person_id
         self.similarity = similarity
+        # 임계치를 넘었든 못 넘었든 **1위 후보**. person_id는 임계치 미달이면 None이
+        # 되므로, 그것만 저장하면 "누구에 가장 가까웠는가"가 사라진다. 발작 단위
+        # 재판정은 그 정보가 있어야 성립한다.
+        self.top_id = top_id if top_id is not None else person_id
+        self.runner_up_id = runner_up_id
+        self.runner_up_similarity = runner_up_similarity
+        # 1등과 2등의 차이. T-norm이 켜져 있으면 z 단위, 아니면 코사인 단위다.
+        # 단위가 섞이므로 임계치는 tnorm 사용 여부와 함께 정해야 한다.
+        self.margin = margin
 
 
 def embedding_to_bytes(emb: np.ndarray) -> bytes:
@@ -148,26 +176,47 @@ class SpeakerIdentifier:
 
     def match(self, emb: np.ndarray,
               registry: Sequence[tuple[int, bytes]]) -> IdentifyResult:
-        """등록 화자 중 가장 가까운 1명. 임계치 미달이면 unknown(FR-05)."""
-        best_id, best_sim = None, -1.0
+        """등록 화자 중 가장 가까운 1명 + 2등. 임계치 미달이면 unknown(FR-05).
+
+        **순위는 T-norm z-score로, 임계치 판정은 원본 코사인으로 한다.** 두 일을
+        나눠야 하는 이유: z는 등록본마다 다른 후함을 걷어내 순위를 바로잡지만
+        (2026-08-28 실측 기침 1개 82.1% → 89.7%), 절대값이 코사인이 아니라서
+        0.75 같은 임계치를 그대로 쓸 수 없다. 코사인은 반대로 임계치는 되지만
+        등록 개수가 많은 화자에게 쏠린다.
+        """
+        scored = []            # (rank_key, person_id, cosine)
         stale = 0
         for person_id, blob in registry:
             ref = bytes_to_embedding(blob)
             if ref.size != emb.size:
                 stale += 1        # 차원이 다른 낡은 등록본은 건너뛴다
                 continue
+            ref = _l2_normalize(ref)
             sim = float(np.dot(emb, ref))   # 양쪽 다 L2 정규화 → 내적 = 코사인
-            if sim > best_sim:
-                best_id, best_sim = person_id, sim
+            z = tnorm.z(sim, ref)
+            scored.append((sim if z is None else z, person_id, sim))
         if stale:
             # 백본을 바꾸면 기존 등록본의 차원이 맞지 않는다. 조용히 넘기면 전부
             # "미등록"으로 보여 원인을 못 찾으므로 한 번은 알린다.
             self._warn_stale(stale, len(registry))
-        if best_id is None:
+        if not scored:
             return IdentifyResult(None, None)
+
+        scored.sort(key=lambda r: r[0], reverse=True)
+        best_key, best_id, best_sim = scored[0]
+        run_id = run_sim = margin = None
+        if len(scored) > 1:
+            run_key, run_id, run_sim = scored[1]
+            margin = round(best_key - run_key, 4)
+            run_sim = round(run_sim, 4)
+
         if best_sim < self.threshold:
-            return IdentifyResult(None, round(best_sim, 4))   # unknown이어도 점수는 남긴다
-        return IdentifyResult(best_id, round(best_sim, 4))
+            # unknown이어도 점수와 1위 후보는 남긴다 — 임계치를 나중에 다시 잡거나
+            # 발작 단위로 재판정하려면 필요하다
+            return IdentifyResult(None, round(best_sim, 4), run_id, run_sim, margin,
+                                  top_id=best_id)
+        return IdentifyResult(best_id, round(best_sim, 4), run_id, run_sim, margin,
+                              top_id=best_id)
 
     def _warn_stale(self, stale: int, total: int) -> None:
         if getattr(self, "_stale_warned", False):

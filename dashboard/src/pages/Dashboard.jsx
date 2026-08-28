@@ -262,7 +262,7 @@ export default function Dashboard() {
                   <button type="button" key={ev.id} className="feed-item" onClick={() => setSelected(ev)}>
                     <span className="feed-title">
                       <span>{speakerLabel(ev)}</span>
-                      {!ev.person_alias && <em className="badge-unreg">미등록</em>}
+                      {!ev.person_alias && <em className="badge-unreg">미판정</em>}
                       {needsReview(ev) && <em className="badge-review">검토 필요</em>}
                     </span>
                     <span className="feed-meta">

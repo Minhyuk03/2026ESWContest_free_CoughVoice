@@ -54,12 +54,12 @@ function bucketText(ms) {
 // 화자별 라인 색. 색각 이상(적록·청황)에도 구분되는 Okabe-Ito 계열에서
 // 흰 배경 가독이 낮은 노랑을 빼고 골랐다. persons 순서대로 배정한다.
 const SERIES_COLORS = ['#0072B2', '#E69F00', '#009E73', '#D55E00', '#CC79A7', '#56B4E9', '#8064A2']
-const UNKNOWN_COLOR = '#8a8f9c' // 미등록은 중립 회색 — 특정 화자와 헷갈리지 않게
+const UNKNOWN_COLOR = '#8a8f9c' // 미판정은 중립 회색 — 특정 화자와 헷갈리지 않게
 
 const SORTS = {
   captured_at: (e) => new Date(e.captured_at).getTime(),
   similarity: (e) => (e.similarity == null ? -1 : e.similarity),
-  person: (e) => (e.person_alias || '￿'), // 미등록은 항상 끝으로
+  person: (e) => (e.person_alias || '￿'), // 미판정은 항상 끝으로
 }
 
 export default function History() {
@@ -133,7 +133,7 @@ export default function History() {
       if (reviewOnly && !needsReview(e)) return false
       if (q) {
         const hay = [
-          e.person_alias || '미등록', e.person_room || '', e.device_id || '',
+          e.person_alias || '미판정', e.person_room || '', e.device_id || '',
           fmtDateTime(e.captured_at),
         ].join(' ').toLowerCase()
         if (!hay.includes(q)) return false
@@ -194,7 +194,7 @@ export default function History() {
     const count = Math.max(2, Math.ceil((end - alignedStart) / bucketMs))
     const span = count * bucketMs
 
-    // 그릴 화자 목록(필터 반영). person이 없으면 '미등록' 묶음.
+    // 그릴 화자 목록(필터 반영). person이 없으면 '미판정' 묶음.
     const keys = []
     if (personFilter === 'all') {
       persons.forEach((p) => keys.push({
@@ -202,9 +202,9 @@ export default function History() {
         label: `${p.alias}${p.room ? ` (${p.room})` : ''}`,
         color: colorOf[String(p.id)],
       }))
-      if (includeUnknown) keys.push({ id: 'unknown', label: '미등록', color: UNKNOWN_COLOR })
+      if (includeUnknown) keys.push({ id: 'unknown', label: '미판정', color: UNKNOWN_COLOR })
     } else if (personFilter === 'unknown') {
-      keys.push({ id: 'unknown', label: '미등록', color: UNKNOWN_COLOR })
+      keys.push({ id: 'unknown', label: '미판정', color: UNKNOWN_COLOR })
     } else {
       const p = persons.find((pp) => String(pp.id) === personFilter)
       keys.push({
@@ -326,12 +326,12 @@ export default function History() {
       const c = confidence(e.similarity)
       return [
         fmtDateTime(e.captured_at),
-        e.person_alias || '미등록',
+        e.person_alias || '미판정',
         e.person_room || '',
         e.person_source === 'manual' ? '사람이 지정' : '모델 판정',
         c.pct ?? '',
         c.pct == null ? '비교 없음' : c.label,
-        e.person_id ? '등록 화자' : '미등록',
+        e.person_id ? '등록 화자' : '미판정',
         e.device_id,
         e.audio_available ? '보관 중' : '삭제됨',
       ].join(',')
@@ -349,7 +349,7 @@ export default function History() {
     if (pickedRows.length === 0 || linkTo === '') return
     const target = persons.find((p) => String(p.id) === linkTo)
     const ok = window.confirm(
-      `선택한 ${pickedRows.length}건을 ${target ? target.alias : '미등록'}(으)로 바꿉니다.\n\n` +
+      `선택한 ${pickedRows.length}건을 ${target ? target.alias : '미판정'}(으)로 바꿉니다.\n\n` +
       '이력과 통계의 표시만 바뀌고, 다음 기침을 같은 사람으로 알아보게 하려면 ' +
       '화자 관리에서 재등록으로 목소리 특징을 갱신해야 합니다. 진행할까요?')
     if (!ok) return
@@ -399,7 +399,7 @@ export default function History() {
           <div className="banner banner-info">
             <span>
               알림에서 넘어온 구간만 보고 있습니다 — <b>{rangeText}</b>
-              {params.get('person') === 'unknown' && ' · 미등록 화자'}
+              {params.get('person') === 'unknown' && ' · 미판정'}
             </span>
             <button type="button" onClick={clearRange}>구간 해제</button>
           </div>
@@ -429,7 +429,7 @@ export default function History() {
             <span className="field-label">화자</span>
             <select value={personFilter} onChange={(e) => setPersonFilter(e.target.value)}>
               <option value="all">전체</option>
-              <option value="unknown">미등록만</option>
+              <option value="unknown">미판정만</option>
               {persons.map((p) => (
                 <option key={p.id} value={p.id}>{p.alias}{p.room ? ` (${p.room})` : ''}</option>
               ))}
@@ -450,7 +450,7 @@ export default function History() {
               onChange={(e) => setIncludeUnknown(e.target.checked)}
               disabled={personFilter !== 'all'}
             />
-            미등록 포함
+            미판정 포함
           </label>
           <label className="check">
             <input type="checkbox" checked={reviewOnly}
@@ -598,7 +598,7 @@ export default function History() {
                 {persons.map((p) => (
                   <option key={p.id} value={p.id}>{p.alias}{p.room ? ` (${p.room})` : ''}</option>
                 ))}
-                <option value="none">미등록으로 되돌리기</option>
+                <option value="none">미판정으로 되돌리기</option>
               </select>
             </label>
             <button type="button" className="primary" disabled={linkTo === '' || busy}
@@ -659,13 +659,13 @@ export default function History() {
                                 style={{ background: colorOf[String(e.person_id)] || UNKNOWN_COLOR }} />
                           {e.person_alias}{e.person_room ? ` (${e.person_room})` : ''}
                         </span>
-                      ) : <span className="muted">미등록</span>}
+                      ) : <span className="muted">미판정</span>}
                     </td>
                     <td data-label="신뢰도"><Confidence value={e.similarity} source={e.person_source} /></td>
                     <td data-label="방향(DOA)" className="muted small">미지원</td>
                     <td data-label="상태">
                       <span className={e.person_id ? 'tag-reg' : 'tag-unreg'}>
-                        {e.person_id ? '등록 화자' : '미등록'}
+                        {e.person_id ? '등록 화자' : '미판정'}
                       </span>
                       {needsReview(e) && <span className="tag-review">검토 필요</span>}
                     </td>

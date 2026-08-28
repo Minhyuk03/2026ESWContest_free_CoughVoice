@@ -27,7 +27,9 @@ class Person(Base):
     sample_count: Mapped[int] = mapped_column(Integer, default=0)  # 등록 시 녹음한 샘플 수
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
-    events: Mapped[List["CoughEvent"]] = relationship(back_populates="person")
+    # runner_up_id 도 persons를 가리키므로 조인 경로가 둘이다 — 어느 쪽인지 명시해야 한다.
+    events: Mapped[List["CoughEvent"]] = relationship(
+        back_populates="person", foreign_keys="CoughEvent.person_id")
 
 
 class CoughEvent(Base):
@@ -45,7 +47,13 @@ class CoughEvent(Base):
     # 화자를 누가 정했는가. 사람이 손으로 지정하면 similarity는 **그 이전 모델 점수**라
     # 지금 라벨과 아무 관계가 없다. 구분해 두지 않으면 화면이 "s02 · 93%"처럼
     # 있지도 않은 확신을 말하게 된다(2026-08-28 실제로 그렇게 보였다).
-    person_source: Mapped[str] = mapped_column(String(10), default="model")  # model | manual
+    person_source: Mapped[str] = mapped_column(String(10), default="model")  # model | manual | bout
+    # 2등 후보. 마진 보류(1등과 2등의 점수차가 작으면 판정을 미룸)를 나중에 다시
+    # 계산할 수 있어야 하므로 남긴다. 1등 점수만 저장하면 "얼마나 아슬아슬했는가"가
+    # 사라져서, 발작 단위 재판정도 원음을 다시 임베딩해야만 가능해진다.
+    runner_up_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("persons.id"), nullable=True)
+    runner_up_sim: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     peak_rms: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     audio_path: Mapped[str] = mapped_column(String(255))  # 저장된 wav 경로
     # 등록(enroll-from-events)에 쓰인 이벤트. 보존 정책(NFR-06, 기본 7일)이 원음을
@@ -68,7 +76,8 @@ class CoughEvent(Base):
     wheeze_prob: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     gasp_prob: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
-    person: Mapped[Optional[Person]] = relationship(back_populates="events")
+    person: Mapped[Optional[Person]] = relationship(
+        back_populates="events", foreign_keys=[person_id])
 
 
 class Alert(Base):
@@ -115,7 +124,9 @@ class AlertRule(Base):
     # core/guidance.py 참조) 사용자가 직접 정한 관찰 기준으로만 의미가 있다.
     KIND_COUNT = "count_window"    # 지정 시간 안에 N회 이상
     KIND_NIGHT = "night_window"    # 야간 시간대에 한해 N회 이상
-    KIND_UNKNOWN = "unknown"       # 미등록 화자의 기침이 발생하면 즉시
+    # 폐기(2026-08-28). 낡은 DB에 이 kind의 행이 남아 있을 수 있어 상수는 남기지만
+    # alert_engine이 평가하지 않는다. 근거는 alert_engine._check_event 주석 참조.
+    KIND_UNKNOWN = "unknown"       # (폐기) 미등록 화자의 기침이 발생하면 즉시
 
     # 참고자료가 권고한 경고 구조 (P6).
     KIND_BASELINE = "baseline_delta"   # 개인 기준선 대비 배수 증가가 지속될 때

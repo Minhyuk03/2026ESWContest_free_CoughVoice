@@ -52,6 +52,12 @@ def _migrate() -> None:
             if col not in ev_cols:
                 conn.execute(text(f"ALTER TABLE cough_events ADD COLUMN {col} {ddl}"))
 
+        # 2등 후보 (마진 보류·발작 단위 재판정용). 기존 행은 NULL이라 마진을 알 수
+        # 없다 — 재판정 대상에서 빠질 뿐 잘못된 값이 들어가지는 않는다.
+        for col, ddl in [("runner_up_id", "INTEGER"), ("runner_up_sim", "FLOAT")]:
+            if col not in ev_cols:
+                conn.execute(text(f"ALTER TABLE cough_events ADD COLUMN {col} {ddl}"))
+
         # 사람이 화자를 지정한 이벤트 표시. 기존 행은 전부 모델 판정으로 본다.
         if "person_source" not in ev_cols:
             conn.execute(text(

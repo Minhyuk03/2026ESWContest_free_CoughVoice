@@ -305,7 +305,7 @@ export default function Alerts() {
                     <p className="muted small">
                       대상: {a.person_alias
                         ? `${a.person_alias}${a.person_room ? ` (${a.person_room})` : ''}`
-                        : '미등록 화자'} · {fmtDateTime(a.created_at)}
+                        : '미판정'} · {fmtDateTime(a.created_at)}
                     </p>
                     {/* 경계값의 출처를 함께 보여 준다. 임상 지침에서 온 값과
                         사용자가 정한 관찰 기준이 화면에서 구분되어야 한다. */}

@@ -27,8 +27,8 @@ DEFAULT_RULES = [
     dict(name="야간 기침", condition_text="기침 ≥ 5회 / 22–06시", target_text="전체 화자",
          enabled=True, kind=AlertRule.KIND_NIGHT, threshold_count=5,
          window_minutes=480, night_start_hour=22, night_end_hour=6, cooldown_minutes=60),
-    dict(name="미등록 감지", condition_text="미등록 기침 발생 시", target_text="—",
-         enabled=False, kind=AlertRule.KIND_UNKNOWN, cooldown_minutes=30),
+    # "미등록 감지"는 2026-08-28에 뺐다. 근거가 없다 — 미등록자 40건 중 35건(87.5%)이
+    # 임계치를 넘어 등록자 이름을 달았으므로, person_id가 비는 것은 외부인의 신호가 아니다.
 
     # --- 참고자료 권고 경고 구조 (P6) ---
     # 변화 경고의 2배는 지침값이 아니라 탐색용 기준이다. 그래서 알림도 info로 뜬다.
@@ -58,8 +58,6 @@ def _evaluation_text(r: AlertRule) -> str:
     화면이 이 문자열을 만들면 표시와 동작이 어긋난다 — 조건 문구는 사용자가
     고칠 수 있지만 평가는 파라미터로 도는 구조이기 때문이다. 서버가 만들어 내려준다.
     """
-    if r.kind == AlertRule.KIND_UNKNOWN:
-        return "미등록 화자 기침 발생 시 즉시"
     if r.kind == AlertRule.KIND_URGENT:
         return "긴급 증상이 입력되면 기침 횟수와 무관하게 즉시"
     if r.kind == AlertRule.KIND_DURATION:

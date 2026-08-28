@@ -29,7 +29,7 @@ export default function Speakers() {
   useEffect(() => { api('/audio-policy').then(setPolicy).catch(() => {}) }, [])
 
   async function remove(p) {
-    if (!window.confirm(`${p.alias} 화자를 삭제할까요? 이벤트 이력은 미등록으로 남습니다.`)) return
+    if (!window.confirm(`${p.alias} 화자를 삭제할까요? 이벤트 이력은 미판정으로 남습니다.`)) return
     try {
       await api(`/persons/${p.id}`, { method: 'DELETE' })
       reload()
@@ -106,7 +106,7 @@ export default function Speakers() {
 
         {persons.length > 0 && (
           <p className="muted small">
-            잘못 식별된 기침이 있나요? <Link to="/history?person=unknown">미등록으로 남은 기침 목록</Link>에서
+            잘못 식별된 기침이 있나요? <Link to="/history?person=unknown">미판정으로 남은 기침 목록</Link>에서
             여러 건을 골라 기존 화자에 연결할 수 있습니다. 다음 기침부터 자동으로 인식하게 하려면
             연결 후 <b>재등록</b>으로 목소리 특징을 갱신하세요.
           </p>

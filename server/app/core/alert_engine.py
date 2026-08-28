@@ -2,7 +2,7 @@
 
 규칙은 두 갈래다.
 
-**관찰 규칙** (KIND_COUNT·KIND_NIGHT·KIND_UNKNOWN)
+**관찰 규칙** (KIND_COUNT·KIND_NIGHT)
     사용자가 직접 정한 절대 횟수 기준. 근거는 사용자의 관심사이지 임상 지침이 아니다.
     참고자료가 분명히 한 대로, 기침 횟수로 질환을 가르는 규칙은 성립하지 않는다
     (질환별 분포가 크게 겹친다 — core/guidance.py). 그래서 이 갈래의 알림은
@@ -72,6 +72,12 @@ class AlertEngine:
 
     def _run(self, db: Session, person_id: Optional[int],
              person: Optional[Person], check) -> List[Alert]:
+        # 미등록(person_id=None) 묶음은 알림 대상이 아니다. 그것은 한 사람이 아니라
+        # "이름을 붙이지 못한 기침들"의 잡동사니라, "미등록 화자 · 최근 24시간 14회"
+        # 같은 문장은 있지도 않은 사람의 상태를 보고하는 셈이 된다(2026-08-27 실제 발생).
+        # 집계·통계에서는 계속 세지만 알림은 울리지 않는다.
+        if person_id is None:
+            return []
         rules = db.scalars(select(AlertRule).where(AlertRule.enabled.is_(True))).all()
         fired: List[Alert] = []
         for rule in rules:
@@ -112,11 +118,11 @@ class AlertEngine:
         if rule.kind == AlertRule.KIND_URGENT:
             return None                      # 증상 입력 경로에서만 평가한다
 
-        if rule.kind == AlertRule.KIND_UNKNOWN:
-            if event.person_id is not None:
-                return None
-            return ("등록되지 않은 화자의 기침이 감지되었습니다. 확인이 필요합니다.",
-                    guidance.SEV_INFO, "사용자 지정 관찰 기준")
+        # KIND_UNKNOWN("미등록 감지")은 2026-08-28에 폐기했다. person_id가 비었다는 것은
+        # "등록되지 않은 사람이 기침했다"가 아니라 "등록본 어느 쪽과도 임계치만큼
+        # 닮지 않았다"일 뿐이다. 실제로 미등록자 40건 중 35건(87.5%)은 임계치를 넘어
+        # 등록자 이름을 달았다 — 진짜 외부인일수록 이 규칙에 걸리지 않는다.
+        # 낡은 DB에 규칙 행이 남아 있어도 여기서 걸러져 발동하지 않는다.
 
         if rule.kind == AlertRule.KIND_DURATION:
             return self._check_duration(db, rule, event, who)
@@ -235,8 +241,9 @@ class AlertEngine:
         """
         now = datetime.now(timezone.utc)
         persons = db.scalars(select(Person)).all()
-        # 미등록 묶음(person_id=None)도 하나의 대상으로 본다 — 규칙이 그렇게 센다.
-        targets: List[tuple] = [(p.id, p) for p in persons] + [(None, None)]
+        # 미등록 묶음은 대상에서 뺀다 — _run이 어차피 울리지 않으므로, 시험 화면에
+        # 남겨두면 "울릴 것"이라고 잘못 안내하게 된다.
+        targets: List[tuple] = [(p.id, p) for p in persons]
 
         out: List[dict] = []
         for person_id, person in targets:

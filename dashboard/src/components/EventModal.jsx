@@ -128,7 +128,7 @@ export default function EventModal({ event, onClose }) {
           <div className="sim-threshold" style={{ left: `${THRESHOLD * 100}%` }} />
         </div>
         <p className="muted small">
-          기기: {event.device_id} · 판정: {event.person_alias ? '등록 화자' : '미등록'}
+          기기: {event.device_id} · 판정: {event.person_alias ? '등록 화자' : '미판정'}
           {event.cough_score != null && ` · 기침 확신도 ${Math.round(event.cough_score * 100)}%`}
         </p>
 
@@ -136,7 +136,7 @@ export default function EventModal({ event, onClose }) {
           <label className="field">
             <span className="field-label">화자 지정</span>
             <select value={personId} onChange={(e) => setPersonId(e.target.value)}>
-              <option value="">미등록</option>
+              <option value="">미판정(비움)</option>
               {persons.map((p) => (
                 <option key={p.id} value={p.id}>{p.alias}{p.room ? ` (${p.room})` : ''}</option>
               ))}

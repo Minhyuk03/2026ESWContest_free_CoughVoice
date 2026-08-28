@@ -57,8 +57,12 @@ export function fmtElapsed(seconds) {
   return `${Math.floor(seconds / 86400)}일 전`
 }
 
+/* 화자가 비어 있을 때 '미등록 화자'라고 쓰면 "등록 안 된 사람이 기침했다"로 읽히는데,
+   그건 사실이 아니다. 등록본 어느 쪽과도 임계치만큼 닮지 않았다는 뜻일 뿐이고,
+   실제 외부인 40건 중 35건(87.5%)은 오히려 등록자 이름을 달았다(2026-08-28 측정).
+   있지도 않은 사람을 만들지 않도록 '미판정'으로 쓴다. */
 export function speakerLabel(ev) {
-  if (!ev.person_alias) return '미등록 화자'
+  if (!ev.person_alias) return '미판정'
   return ev.person_room ? `${ev.person_alias} (${ev.person_room})` : ev.person_alias
 }
 
@@ -67,7 +71,7 @@ export function speakerLabel(ev) {
 const KIND_LABEL = {
   count_window: '횟수',
   night_window: '야간',
-  unknown: '미등록',
+  unknown: '미판정',        // 폐기된 규칙 종류 — 낡은 알림 이력 표시용으로만 남긴다
   baseline_delta: '평소 대비',
   duration_days: '지속 기간',
   urgent_symptom: '긴급 증상',
@@ -90,7 +94,7 @@ export function conditionText(kind, v) {
     case 'night_window':
       return `기침 ≥ ${v.threshold_count}회 / ${v.night_start_hour}–${v.night_end_hour}시`
     case 'unknown':
-      return '미등록 화자의 기침 발생 시'
+      return '(폐기된 규칙)'
     case 'baseline_delta':
       return `개인 기준선의 ${v.ratio_threshold}배 / 최근 ${v.sustain_hours}시간`
     case 'duration_days':
@@ -105,7 +109,8 @@ export function conditionText(kind, v) {
 export const RULE_KINDS = [
   { value: 'count_window', label: '횟수 (지정 시간 안에 N회)' },
   { value: 'night_window', label: '야간 횟수 (야간 시간대에 N회)' },
-  { value: 'unknown', label: '미등록 화자 감지' },
+  // '미등록 화자 감지'는 2026-08-28에 뺐다. 근거가 없다 — 외부인 40건 중 35건(87.5%)이
+  // 임계치를 넘어 등록자 이름을 달았으므로, 화자가 비는 것은 외부인의 신호가 아니다.
   { value: 'baseline_delta', label: '평소 대비 증가' },
   { value: 'duration_days', label: '기침 지속 기간' },
   { value: 'urgent_symptom', label: '긴급 증상 입력' },

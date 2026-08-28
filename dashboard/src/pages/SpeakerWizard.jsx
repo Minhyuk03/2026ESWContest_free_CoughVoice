@@ -160,7 +160,7 @@ export default function SpeakerWizard() {
                     <div style={{ flex: 1 }}>
                       <p className="alert-title">{fmtTime(e.captured_at)} · {e.device_id}</p>
                       <p className="muted small">
-                        현재 판정: {e.person_alias || '미등록'}
+                        현재 판정: {e.person_alias || '미판정'}
                         {e.similarity != null && ` (유사도 ${e.similarity})`}
                         {/* 게이트 점수 = "이게 기침인가" 확신도. 낮은 클립은 기침이 약하거나
                             잡음이 섞인 것이라 등록 샘플로는 피하는 편이 낫다. */}
