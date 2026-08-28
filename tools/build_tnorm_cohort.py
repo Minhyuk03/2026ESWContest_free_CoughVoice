@@ -19,6 +19,9 @@
 from __future__ import annotations
 
 import argparse
+import datetime as dt
+import glob
+import json
 import os
 import sqlite3
 import sys
@@ -35,21 +38,53 @@ from app.ml.tnorm import COHORT_PATH, MIN_COHORT  # noqa: E402
 DEFAULT_ARCHIVE = os.path.expanduser("~/Downloads/coughid_label_session_20260826")
 
 
+def _excluded_ranges(args) -> list[tuple[dt.datetime, dt.datetime]]:
+    """제외할 화자의 블록 시간 구간. 라벨 JSON이 없으면 제외할 수 없으므로 알리고 멈춘다."""
+    paths = [args.labels] if args.labels else sorted(
+        glob.glob(os.path.join(args.archive, "label_session_*.json")))
+    if not paths:
+        raise SystemExit("--exclude-speaker 를 쓰려면 블록 라벨 JSON이 있어야 한다 "
+                         "(아카이브 안 label_session_*.json 또는 --labels)")
+    want = set(args.exclude_speaker)
+    out = []
+    for lp in paths:
+        for b in json.load(open(lp)).get("blocks", []):
+            if b.get("speaker") in want:
+                out.append((dt.datetime.fromisoformat(b["start"]),
+                            dt.datetime.fromisoformat(b["end"])))
+    if not out:
+        raise SystemExit(f"라벨에서 {want} 를 찾지 못했다. 화자 이름을 확인할 것")
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--archive", default=DEFAULT_ARCHIVE,
                     help="cough_id.db 와 audio_store/ 를 가진 아카이브 디렉터리")
     ap.add_argument("--out", default=COHORT_PATH)
     ap.add_argument("--backend", default="wavlm")
+    ap.add_argument("--exclude-speaker", nargs="*", default=[],
+                    help="라벨 세션의 화자 이름(hwang·choi 등). 그 사람의 블록을 코호트에서 뺀다. "
+                         "**그 사람을 화자로 등록했다면 반드시 빼야 한다** — 코호트에 등록자 본인이 "
+                         "있으면 μ가 본인 점수에 끌려 올라가 본인이 손해를 본다")
+    ap.add_argument("--labels", default=None,
+                    help="블록 라벨 JSON (기본: 아카이브 안의 label_session_*.json)")
     args = ap.parse_args()
 
     db = os.path.join(args.archive, "cough_id.db")
     if not os.path.isfile(db):
         raise SystemExit(f"아카이브에 cough_id.db 가 없다: {db}")
 
+    drop = _excluded_ranges(args) if args.exclude_speaker else []
+    if drop:
+        print(f"제외: {', '.join(args.exclude_speaker)} — 블록 {len(drop)}개")
+
     con = sqlite3.connect(db)
     paths = []
-    for (ap_,) in con.execute("select audio_path from cough_events order by id"):
+    for cap, ap_ in con.execute("select captured_at, audio_path from cough_events order by id"):
+        when = dt.datetime.fromisoformat(cap).replace(tzinfo=dt.timezone.utc)
+        if any(s0 <= when <= e0 for s0, e0 in drop):
+            continue
         p = os.path.join(args.archive, ap_)
         if os.path.exists(p):
             paths.append(p)
