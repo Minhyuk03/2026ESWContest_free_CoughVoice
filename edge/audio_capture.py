@@ -16,8 +16,11 @@ import numpy as np
 SAMPLE_RATE = 16000  # 파이프라인 전체 기준 샘플레이트
 
 # I2S MEMS 마이크(MS3625, googlevoicehat 오버레이) 하드웨어 스펙 — 2026-08-05 실측
-# ALSA가 S32_LE·2ch·48kHz로만 열리고, 유효 신호는 LEFT 채널뿐이며(RIGHT는 항상 0),
-# 24bit 샘플이 32bit 슬롯 상위에 left-justified로 들어오므로 >>8 시프트가 필요하다.
+# ALSA가 S32_LE·2ch·48kHz로만 열리고, 24bit 샘플이 32bit 슬롯 상위에 left-justified로
+# 들어오므로 >>8 시프트가 필요하다. 우리는 LEFT 채널만 쓴다.
+# 2026-08-28 정정: 예전 기록의 "RIGHT는 항상 0"은 재현되지 않는다 — 69.2분 녹음에서
+# RIGHT가 LEFT와 같은 소리를 싣고 있었다(큰 소리 구간 corr 0.76, R/L rms비 1.05).
+# 동작에는 영향이 없지만(LEFT만 읽는다), RIGHT가 0인지로 배선을 진단하면 안 된다.
 MIC_CAPTURE_RATE = 48000
 MIC_RAW_CHANNELS = 2
 MIC_BIT_SHIFT = 8
