@@ -53,7 +53,9 @@ def embed_crops(ident, path: str, n_crops: int) -> list[np.ndarray]:
 
     x, rate = read_wav(path)
     out = []
-    model = ident._ensure_model()
+    # 투영층은 ECAPA 임베딩 위에서 학습된다 — 기본 백본이 무엇이든 여기선 ECAPA로 고정한다.
+    from app.ml.backbone import get_backbone
+    backbone = get_backbone('ecapa')
     for seg in crop_peaks(x, rate, n_crops):
         t = torch.from_numpy(np.ascontiguousarray(seg)).unsqueeze(0)
         if rate != TARGET_RATE:
@@ -62,7 +64,7 @@ def embed_crops(ident, path: str, n_crops: int) -> list[np.ndarray]:
             np.ascontiguousarray(normalize_rms(t.squeeze(0).numpy()))).unsqueeze(0)
         with torch.no_grad():
             # 여기서는 투영을 적용하지 않는다. 투영층을 학습하는 중이므로 원본 임베딩이 필요하다.
-            out.append(_l2_normalize(model.encode_batch(wav).squeeze().cpu().numpy()))
+            out.append(_l2_normalize(backbone.encode(wav)))
     return out
 
 

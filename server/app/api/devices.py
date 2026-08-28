@@ -91,6 +91,34 @@ def covered_hours(db: Session, start: datetime, end: datetime) -> set:
     return out
 
 
+def _elapsed_text(seconds: float) -> str:
+    if seconds < 60:
+        return f"{int(seconds)}초"
+    if seconds < 3600:
+        return f"{int(seconds // 60)}분"
+    if seconds < 86400:
+        return f"{int(seconds // 3600)}시간 {int((seconds % 3600) // 60)}분"
+    return f"{int(seconds // 86400)}일"
+
+
+def status_reason(online: Optional[bool], seen: Optional[datetime],
+                  now: Optional[datetime] = None) -> str:
+    """화면에 그대로 띄울 상태 설명.
+
+    **서버는 원인을 구분할 수 없다.** 하트비트가 끊긴 이유가 전원인지 네트워크인지
+    프로그램 중단인지 알 방법이 없으므로, 아는 사실(마지막 신호 시각과 경과 시간)을
+    말하고 가능한 원인을 나열한다. 하나를 골라 단정하면 엉뚱한 곳을 보게 만든다.
+    """
+    if seen is None:
+        return ("하트비트 기록이 없습니다 — 구버전 엣지이거나 아직 한 번도 신호를 "
+                "보내지 않았습니다. 이 경우 상태는 최근 기침 수신 여부로 대신 판정합니다.")
+    elapsed = ((now or datetime.now(timezone.utc)) - seen).total_seconds()
+    if online:
+        return f"정상 수신 중 — {_elapsed_text(elapsed)} 전 마지막 신호"
+    return (f"{_elapsed_text(elapsed)}째 신호가 없습니다. 전원 차단 · 네트워크 단절 · "
+            f"엣지 프로그램 중단 중 하나이며, 서버에서는 원인을 구분할 수 없습니다.")
+
+
 @router.get("/devices", summary="장치 상태")
 def list_devices(db: Session = Depends(get_db)):
     now = datetime.now(timezone.utc)
@@ -108,10 +136,12 @@ def list_devices(db: Session = Depends(get_db)):
     out = []
     for d in by_dev.values():
         seen = d["last_seen"]
+        online = bool(seen and now - seen <= ONLINE_WINDOW)
         out.append({**d,
                     "last_seen": seen.isoformat() if seen else None,
-                    "online": bool(seen and now - seen <= ONLINE_WINDOW),
-                    "seconds_since_seen": round((now - seen).total_seconds(), 1) if seen else None})
+                    "online": online,
+                    "seconds_since_seen": round((now - seen).total_seconds(), 1) if seen else None,
+                    "reason": status_reason(online, seen, now)})
     return {"items": sorted(out, key=lambda x: x["device_id"]),
             "online_window_seconds": ONLINE_WINDOW.total_seconds(),
             "min_beats_per_hour": MIN_BEATS_PER_HOUR}

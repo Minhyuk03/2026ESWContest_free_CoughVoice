@@ -5,9 +5,10 @@
 (8/24 확인). 여기서는 x01을 s01의 한 세션으로 되돌려 놓는다.
 
 세션 구성 (모두 다른 날):
-  s01 : ses01 8/18 · ses02 8/20 · x01→ses04 8/24 · ses03 8/25   (4일)
-  s02 : ses01 8/24 · ses02 8/25                                  (2일)
+  s01 : ses01 8/18 · ses02 8/20 · x01→ses05 8/24 · ses03 8/25 · ses04 8/27  (5일)
+  s02 : ses01 8/24 · ses02 8/25                                            (2일)
   s03 : ses01 8/24                                               (1일 — 등록 불가, 타인 전용)
+  s04 : ses01 8/27                                               (1일 — 등록 불가, 타인 전용)
 
 **등록 세션과 시험 세션은 반드시 다른 날이어야 한다.** 같은 날 녹음을 쪼개면 목소리가
 아니라 그날의 마이크 위치·방 울림을 외운 것을 정확도로 착각한다.
@@ -33,10 +34,18 @@ from app.ml.identifier import SpeakerIdentifier  # noqa: E402
 from train_cough_projection import Projection  # noqa: E402
 
 PROJ = os.path.expanduser("~/.cache/coughid/projection.npz")
-CACHE = os.path.expanduser("~/.cache/coughid/our_embeddings.npz")
 
-# x01은 s01과 동일인이다. s01의 기존 세션 번호와 겹치지 않게 4번으로 넣는다.
-ALIAS = {("x01", "1"): ("s01", "4")}
+
+def cache_path(backend):
+    """**백본별로 캐시를 나눈다.** 한 파일에 섞으면 백본을 바꿔도 옛 임베딩이 재사용돼
+    바뀐 줄 모르고 옛 수치를 다시 보게 된다."""
+    tag = "" if backend == "ecapa" else f"_{backend}"
+    return os.path.expanduser(f"~/.cache/coughid/our_embeddings{tag}.npz")
+
+# x01은 s01과 동일인이다. 기존 세션 번호와 겹치지 않게 넣는다.
+# 2026-08-27: 실제 s01 ses04를 녹음해서 4번이 찼다. 그대로 두면 8/24(x01)와
+# 8/27(ses04)이 한 세션으로 합쳐져 "세션 = 다른 날" 전제가 깨진다 → 5번으로 옮김.
+ALIAS = {("x01", "1"): ("s01", "5")}
 
 
 def load_rows(data_dir):
@@ -53,23 +62,23 @@ def load_rows(data_dir):
     return out
 
 
-def embeddings(rows, use_cache=True):
-    """원본 ECAPA 임베딩(투영 전)을 추출한다. 파일 경로를 키로 캐시한다."""
+def embeddings(rows, backend="ecapa", use_cache=True):
+    """원본 임베딩(투영 전)을 추출한다. 파일 경로를 키로 캐시한다."""
+    path = cache_path(backend)
     cache = {}
-    if use_cache and os.path.exists(CACHE):
-        z = np.load(CACHE, allow_pickle=True)
+    if use_cache and os.path.exists(path):
+        z = np.load(path, allow_pickle=True)
         cache = {k: z[k] for k in z.files}
 
-    ident = None
     missing = [p for _, _, _, p in rows if p not in cache]
     if missing:
-        print(f"임베딩 추출 {len(missing)}개 (캐시 {len(cache)}개)...", flush=True)
-        ident = SpeakerIdentifier()
+        print(f"임베딩 추출 {len(missing)}개 (캐시 {len(cache)}개, 백본 {backend})...", flush=True)
+        ident = SpeakerIdentifier(backend=backend)
         for i, p in enumerate(missing, 1):
             cache[p] = ident.embed(p, project=False)
             if i % 20 == 0:
                 print(f"  {i}/{len(missing)}", flush=True)
-        np.savez(CACHE, **cache)
+        np.savez(path, **cache)
     return cache
 
 
@@ -92,11 +101,13 @@ def eer_curve(genuine, impostor):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default=os.path.expanduser("~/Downloads/cough_data"))
+    ap.add_argument("--backbone", default="wavlm", choices=("ecapa", "wavlm"))
     ap.add_argument("--no-cache", action="store_true")
     args = ap.parse_args()
 
     rows = load_rows(args.data)
-    emb = embeddings(rows, use_cache=not args.no_cache)
+    emb = embeddings(rows, backend=args.backbone, use_cache=not args.no_cache)
+    print(f"\n백본: {args.backbone}")
 
     by_ses = defaultdict(list)      # (화자, 세션) -> 임베딩 목록
     for spk, ses, _typ, path in rows:
@@ -113,24 +124,41 @@ def main():
         parts = [f"ses{s}({len(by_ses[(spk, s)])})" for s in sessions[spk]]
         print(f"  {spk}: {' · '.join(parts)}  = {sum(len(by_ses[(spk,s)]) for s in sessions[spk])}개")
 
-    # 변환 3종
-    z = np.load(PROJ, allow_pickle=True)
-    mu = z["mu"]
-    model = Projection()
-    model.load_state_dict({k[2:]: torch.from_numpy(z[k]) for k in z.files if k.startswith("w_")})
-    model.eval()
+    # 변환 — Coswara 투영층·중심화는 **ECAPA 192차원 위에서 만들어진 것**이라
+    # 다른 백본에는 적용할 수 없다. WavLM에서는 평가셋 중심화로 대체한다
+    # (외부 평균이 아니므로 낙관적일 수 있다는 점을 감안해 읽을 것).
+    if args.backbone == "ecapa":
+        z = np.load(PROJ, allow_pickle=True)
+        mu = z["mu"]
+        model = Projection()
+        model.load_state_dict({k[2:]: torch.from_numpy(z[k]) for k in z.files
+                               if k.startswith("w_")})
+        model.eval()
 
-    def projected(A):
-        with torch.no_grad():
-            return model(torch.from_numpy((A - mu).astype(np.float32))).numpy()
+        def projected(A):
+            with torch.no_grad():
+                return model(torch.from_numpy((A - mu).astype(np.float32))).numpy()
 
-    transforms = [("원본 코사인", lambda A: A),
-                  ("Coswara 중심화", lambda A: A - mu),
-                  ("Coswara 투영층", projected)]
+        transforms = [("원본 코사인", lambda A: A),
+                      ("Coswara 중심화", lambda A: A - mu),
+                      ("Coswara 투영층", projected)]
+    else:
+        # 외부(Coswara) 중심화가 운영에서 실제로 쓰는 보정이다. 평가셋 중심화는
+        # 상한을 가늠하는 참고치일 뿐 — 시험 데이터의 통계를 미리 본 값이다.
+        from app.ml.centering import Centering
+        ext = Centering("wavlm")
+        mu_eval = np.concatenate(list(by_ses.values())).mean(axis=0)
+        transforms = [("원본 코사인", lambda A: A)]
+        if ext.available:
+            transforms.append(("Coswara 중심화", ext.apply))
+            projected = ext.apply
+        else:
+            projected = lambda A: A - mu_eval
+        transforms.append(("평가셋 중심화(참고)", lambda A: A - mu_eval))
 
     # ---------- 화자 내 일관성 (실시간 전이 가능성의 선행 지표) ----------
-    print("\n=== 화자 내 일관성 — 세션 간 상호 유사도 (투영층) ===")
-    print("  8/25 실측: 통제 녹음 +0.324 / 실사용 엣지 클립 +0.110")
+    print("\n=== 화자 내 일관성 — 세션 간 상호 유사도 ===")
+    print("  8/25 실측(ECAPA 투영층): 통제 녹음 +0.324 / 실사용 엣지 클립 +0.110")
     P = {k: norm(projected(v)) for k, v in by_ses.items()}
     for spk in speakers:
         ses_list = sessions[spk]
@@ -174,8 +202,16 @@ def main():
               f"{np.mean(i_all):>+9.3f}{np.mean(g_all)-np.mean(i_all):>+9.3f}")
     print(f"  (동일인 트라이얼 {len(pooled['원본 코사인'][2])} · 타인 {len(pooled['원본 코사인'][3])})")
 
-    best_label = min(pooled, key=lambda k: pooled[k][0])
-    print(f"\n최고: {best_label} — EER {pooled[best_label][0]*100:.2f}%")
+    # **"(참고)"가 붙은 변환은 선택에서 제외한다.** 평가셋 중심화는 시험 데이터의 평균을
+    # 미리 본 값이라 운영에서 재현할 수 없다. 이후 운용 곡선·다자 식별은 실제로 배포
+    # 가능한 설정에서 나와야 의미가 있다.
+    deployable = [k for k in pooled if "(참고)" not in k]
+    best_label = min(deployable, key=lambda k: pooled[k][0])
+    print(f"\n최고(배포 가능): {best_label} — EER {pooled[best_label][0]*100:.2f}%")
+    ref = [k for k in pooled if "(참고)" in k]
+    if ref:
+        r = min(ref, key=lambda k: pooled[k][0])
+        print(f"  참고: {r} {pooled[r][0]*100:.2f}% — 시험 데이터 평균을 쓴 값이라 운영 불가")
 
     # 화자별 분해
     print(f"\n=== 화자별 EER ({best_label}) ===")
@@ -200,7 +236,12 @@ def main():
     g_all, i_all = np.array(g_all), np.array(i_all)
     print(f"\n=== 운용 곡선 ({best_label}) ===")
     print(f"{'임계치':>7}{'재현율':>9}{'FAR':>9}{'정밀도':>9}")
-    for th in [0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.60]:
+    # **임계치 후보는 점수 분포에서 뽑는다.** 고정 격자(0.20~0.60)는 ECAPA 스케일에
+    # 맞춘 것이라, 유사도가 전반적으로 높은 백본에서는 곡선이 통째로 범위 밖으로 나간다.
+    lo = float(min(g_all.min(), i_all.min()))
+    hi = float(max(g_all.max(), i_all.max()))
+    grid = sorted(set(np.round(np.linspace(lo, hi, 11), 3)))
+    for th in grid:
         tp = int((g_all >= th).sum())
         fp = int((i_all >= th).sum())
         rec = tp / len(g_all)

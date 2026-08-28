@@ -61,6 +61,7 @@ def overview(db: Session = Depends(get_db)):
 
     person_count = db.scalar(select(func.count(Person.id))) or 0
 
+    seen = devices.last_seen(db)
     return {
         "today_cough_count": len(events),
         "active_alerts": active_alerts,
@@ -69,6 +70,17 @@ def overview(db: Session = Depends(get_db)):
         # 판정 근거를 함께 준다. 하트비트가 없는 상태의 device_online은
         # "최근 기침 있었나"에 가까우므로 화면·보고서에서 구분해야 한다.
         "device_online_source": "heartbeat" if heartbeat_based else "last_event",
+        # 마지막 통신 시각과 상태 설명 — 화면이 "오프라인"만 띄우면 사용자는
+        # 언제부터인지, 무엇을 확인해야 하는지 알 수 없다.
+        "device_last_seen": seen.isoformat() if seen else None,
+        "device_seconds_since_seen": (round((now - seen).total_seconds(), 1)
+                                      if seen else None),
+        "device_status_reason": devices.status_reason(bool(online), seen, now),
+        # 오늘 집계의 기준 구간 — 화면이 "오늘"의 뜻을 정확히 적을 수 있게 한다.
+        "today_start_local": datetime.now().astimezone().replace(
+            hour=0, minute=0, second=0, microsecond=0).isoformat(),
+        "alerts_window_hours": 24,
+        "generated_at": now.isoformat(),
     }
 
 

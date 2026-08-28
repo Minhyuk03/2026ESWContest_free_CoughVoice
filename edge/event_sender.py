@@ -7,13 +7,16 @@
 """
 from __future__ import annotations
 
+import ipaddress
 import json
 import queue
+import socket
 import threading
 import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 import requests
 
@@ -27,6 +30,14 @@ QUEUE_MAX_EVENTS = 500
 # 같은 항목을 이만큼 시도해도 서버가 거부하면 격리한다. 서버가 4xx/5xx로 거절하는
 # 항목을 무한 재시도하면 그 뒤의 정상 항목까지 막힌다.
 MAX_ATTEMPTS_PER_ITEM = 3
+
+# 서버 주소를 이름으로 받았을 때, 한 번 찾은 IP를 이만큼 재사용한다.
+# 매 요청마다 이름을 다시 찾으면 mDNS(.local)가 흔들릴 때마다 전송이 통째로 실패한다.
+HOST_CACHE_TTL = 300.0
+# 생존 신호가 실패했을 때 다음 시도까지의 첫 대기. 이후 두 배씩 늘리되 정상 주기를
+# 넘지 않는다. 실패했다고 다음 정상 주기까지 통째로 기다리면, 서버의 온라인 판정 창
+# (기본 180초)이 연속 실패 두 번에 무너진다.
+HEARTBEAT_RETRY_BASE = 5.0
 
 
 class EventSender:
@@ -43,6 +54,16 @@ class EventSender:
         base = server_url.rstrip("/")
         self.endpoint = base + "/events"
         self.heartbeat_endpoint = base + "/heartbeat"
+        # 이름 → IP 캐시. 서버를 `http://<이름>.local:8000`으로 받으면 요청마다
+        # 이름 찾기가 일어나는데, 실측(2026-08-28)에서 이 조회가 40% 가까이 실패했고
+        # 한 번은 공인 IP(ISP의 NXDOMAIN 대체 응답)로 잘못 답했다. 조회는 가끔 하고
+        # 결과를 재사용한다.
+        parts = urlsplit(base)
+        self._host = parts.hostname or ""
+        self._port = parts.port
+        self._ip: str | None = None
+        self._ip_at = 0.0
+        self._ip_lock = threading.Lock()
         self.heartbeat_interval = heartbeat_interval
         self.device_id = device_id
         self.timeout = timeout
@@ -99,7 +120,79 @@ class EventSender:
     def stop(self) -> None:
         self._stop.set()
 
+    # ---------------------------------------------------- 서버 주소 해석
+    def _lookup_ip(self) -> str | None:
+        """서버 이름을 IP로 찾는다. 못 찾으면 None."""
+        if not self._host:
+            return None
+        try:
+            ipaddress.ip_address(self._host)
+            return self._host              # 이미 IP로 준 경우
+        except ValueError:
+            pass
+        try:
+            infos = socket.getaddrinfo(self._host, self._port or 80,
+                                       socket.AF_INET, socket.SOCK_STREAM)
+        except OSError:
+            return None
+        for info in infos:
+            ip = info[4][0]
+            # `.local` 이름은 같은 랜 안의 주소여야 한다. 공인 IP가 돌아왔다면
+            # mDNS가 아니라 ISP DNS가 아무 주소나 답한 것이므로 버린다 —
+            # 그대로 쓰면 남의 서버로 기침 오디오를 보내게 된다.
+            if self._host.endswith(".local"):
+                addr = ipaddress.ip_address(ip)
+                if not (addr.is_private or addr.is_link_local or addr.is_loopback):
+                    continue
+            return ip
+        return None
+
+    def _server_ip(self) -> str | None:
+        """캐시된 IP를 돌려준다. 만료됐으면 다시 찾되, **실패하면 옛 값을 계속 쓴다.**
+
+        이름 찾기가 실패한 것과 서버가 죽은 것은 다르다. 옛 IP가 아직 맞는 경우가
+        대부분이므로, 조회 실패를 이유로 전송을 포기하지 않는다.
+        """
+        now = time.monotonic()
+        with self._ip_lock:
+            if self._ip and (now - self._ip_at) < HOST_CACHE_TTL:
+                return self._ip
+        found = self._lookup_ip()
+        with self._ip_lock:
+            if found:
+                self._ip = found
+                self._ip_at = now
+            return self._ip
+
+    def _stale_ip(self) -> None:
+        """요청이 실패하면 다음 번엔 이름을 다시 찾게 한다(값은 남겨 둔다)."""
+        with self._ip_lock:
+            self._ip_at = 0.0
+
+    def _url(self, endpoint: str) -> str:
+        ip = self._server_ip()
+        if not ip:
+            return endpoint                # 찾은 적이 없으면 이름 그대로 맡긴다
+        p = urlsplit(endpoint)
+        netloc = ip if p.port is None else f"{ip}:{p.port}"
+        return urlunsplit((p.scheme, netloc, p.path, p.query, p.fragment))
+
     # ------------------------------------------------------------------
+    def _beat(self) -> bool:
+        try:
+            r = requests.post(self._url(self.heartbeat_endpoint),
+                              json={"device_id": self.device_id},
+                              headers=self._auth_headers,
+                              timeout=self.timeout)
+            if r.status_code >= 400:
+                return False
+            return True
+        except Exception:
+            # 서버가 잠깐 없는 것은 정상 — 다음 시도에 다시 보낸다.
+            # RequestException뿐 아니라 어떤 예외로도 이 스레드가 죽으면 안 된다.
+            self._stale_ip()
+            return False
+
     def _heartbeat_loop(self) -> None:
         """주기적으로 생존을 알린다.
 
@@ -107,23 +200,23 @@ class EventSender:
         잠들 수 있는데, 그동안 생존 신호까지 멈추면 서버가 복구된 뒤에도 한참 오프라인으로
         보인다. 실패해도 재시도 큐에 쌓지 않는다 — 지나간 시점의 생존은 나중에 알려봐야
         의미가 없고, 큐만 불린다.
+
+        **실패하면 곧바로(5초 뒤부터) 다시 시도한다.** 60초 주기에서 한 번 놓치면
+        신호 간격이 120초, 두 번 놓치면 180초가 되어 서버의 온라인 창을 넘긴다.
+        기침이 없어도 조용히 오프라인으로 표시되던 원인이 이것이었다.
         """
-        # 기동 직후 한 번 보내 서버가 즉시 온라인으로 인식하게 한다.
-        first = True
+        delay = 0.0
+        fails = 0
         while not self._stop.is_set():
-            if not first:
-                if self._stop.wait(self.heartbeat_interval):
-                    break
-            first = False
-            try:
-                requests.post(self.heartbeat_endpoint,
-                              json={"device_id": self.device_id},
-                              headers=self._auth_headers,
-                              timeout=self.timeout)
-            except Exception:
-                # 서버가 잠깐 없는 것은 정상 — 다음 주기에 다시 보낸다.
-                # RequestException뿐 아니라 어떤 예외로도 이 스레드가 죽으면 안 된다.
-                pass
+            if delay > 0 and self._stop.wait(delay):
+                break
+            if self._beat():
+                fails = 0
+                delay = self.heartbeat_interval
+            else:
+                fails += 1
+                delay = min(self.heartbeat_interval,
+                            HEARTBEAT_RETRY_BASE * (2 ** (fails - 1)))
 
     # ------------------------------------------------------------------
     def _post(self, wav_bytes: bytes, meta: dict) -> str:
@@ -136,7 +229,7 @@ class EventSender:
         """
         try:
             r = requests.post(
-                self.endpoint,
+                self._url(self.endpoint),
                 files={"audio": ("cough.wav", wav_bytes, "audio/wav")},
                 data={"meta": json.dumps(meta)},
                 headers=self._auth_headers,
@@ -146,6 +239,7 @@ class EventSender:
             return "ok" if r.status_code < 300 else "server_error"
         except requests.RequestException as e:
             print(f"[sender] 전송 실패: {e}", flush=True)
+            self._stale_ip()
             return "unreachable"
 
     def _enqueue(self, wav_bytes: bytes, meta: dict) -> None:

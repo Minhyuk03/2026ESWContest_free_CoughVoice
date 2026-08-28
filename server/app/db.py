@@ -52,6 +52,17 @@ def _migrate() -> None:
             if col not in ev_cols:
                 conn.execute(text(f"ALTER TABLE cough_events ADD COLUMN {col} {ddl}"))
 
+        # 2등 후보 (마진 보류·발작 단위 재판정용). 기존 행은 NULL이라 마진을 알 수
+        # 없다 — 재판정 대상에서 빠질 뿐 잘못된 값이 들어가지는 않는다.
+        for col, ddl in [("runner_up_id", "INTEGER"), ("runner_up_sim", "FLOAT")]:
+            if col not in ev_cols:
+                conn.execute(text(f"ALTER TABLE cough_events ADD COLUMN {col} {ddl}"))
+
+        # 사람이 화자를 지정한 이벤트 표시. 기존 행은 전부 모델 판정으로 본다.
+        if "person_source" not in ev_cols:
+            conn.execute(text(
+                "ALTER TABLE cough_events ADD COLUMN person_source VARCHAR(10) DEFAULT 'model'"))
+
         # 원음 보존 정책(NFR-06) — 등록에 쓰인 이벤트는 만료 삭제에서 제외한다.
         if "enrolled" not in ev_cols:
             conn.execute(text(
@@ -59,9 +70,17 @@ def _migrate() -> None:
 
         al_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(alerts)"))}
         for col, ddl in [("severity", "VARCHAR(10) DEFAULT 'info'"),
-                         ("source", "VARCHAR(120)")]:
+                         ("source", "VARCHAR(120)"),
+                         # 후속 조치 워크플로 — 기존 알림은 전부 '미확인'에서 시작한다.
+                         ("status", "VARCHAR(10) DEFAULT 'open'"),
+                         ("assignee", "VARCHAR(50)"),
+                         ("acked_at", "DATETIME"),
+                         ("note", "VARCHAR(500)")]:
             if col not in al_cols:
                 conn.execute(text(f"ALTER TABLE alerts ADD COLUMN {col} {ddl}"))
+        # ALTER의 DEFAULT는 기존 행에 채워지지만, 컬럼이 이미 있고 NULL인 행이 있으면
+        # 상태 필터가 그 행을 어디에도 못 넣는다. 한 번 훑어 채운다.
+        conn.execute(text("UPDATE alerts SET status = 'open' WHERE status IS NULL"))
 
         rule_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(alert_rules)"))}
         for col, ddl in [

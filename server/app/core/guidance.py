@@ -28,6 +28,25 @@ SEV_INFO = "info"          # 참고
 SEV_ADVISORY = "advisory"  # 진료 안내
 SEV_URGENT = "urgent"      # 즉시 진료
 
+# 화면에 쓰는 한글 라벨과 정렬 순위. 코드값(info/advisory/urgent)을 그대로 보여주면
+# 사용자가 급한 정도를 읽어낼 수 없어 세 단계로 이름을 붙인다. 라벨 옆의 설명은
+# '무엇을 하라는 뜻인가'만 말한다 — 질환의 경중이 아니다.
+SEV_LABELS = {
+    SEV_INFO: "주의",
+    SEV_ADVISORY: "중요",
+    SEV_URGENT: "긴급",
+}
+SEV_HINTS = {
+    SEV_INFO: "참고해 두세요",
+    SEV_ADVISORY: "진료 시점을 검토하세요",
+    SEV_URGENT: "지금 진료가 필요합니다",
+}
+SEV_RANK = {SEV_URGENT: 0, SEV_ADVISORY: 1, SEV_INFO: 2}
+
+
+def severity_label(sev: str) -> str:
+    return SEV_LABELS.get(sev or SEV_INFO, SEV_LABELS[SEV_INFO])
+
 # --------------------------------------------------------------------------
 # 기침 측정 규약
 #

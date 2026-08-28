@@ -32,7 +32,11 @@ def main() -> None:
         " (USB 오디오 연결 시 카드 번호가 바뀌므로 hw:N 대신 이름 사용)",
     )
     p.add_argument("--gain", type=float, default=5.0, help="입력 게인 (I2S MEMS 실측 잠정치 ~5x, 거리별로 재측정 필요)")
-    p.add_argument("--threshold", type=float, default=0.08, help="RMS 검출 임계치")
+    p.add_argument("--threshold", type=float, default=0.05,
+                   help="RMS 검출 임계치 (하이패스 적용 후 기준. 필터를 끄면 0.10 수준이 맞다)")
+    p.add_argument("--hp-hz", type=float, default=80.0,
+                   help="판정용 RMS에만 거는 하이패스 차단주파수(Hz). 0이면 끈다. "
+                        "저역 드리프트·진동이 RMS를 밀어 올려 생기는 오탐을 막는다")
     p.add_argument("--device-id", default="rpi5-01")
     p.add_argument("--heartbeat", type=float, default=60.0,
                    help="생존 신호 간격(초). 0이면 보내지 않는다")
@@ -47,7 +51,7 @@ def main() -> None:
         device=int(args.device) if args.device and args.device.isdigit() else args.device,
         gain=args.gain,
     )
-    detector = CoughDetector(capture, rms_threshold=args.threshold)
+    detector = CoughDetector(capture, rms_threshold=args.threshold, hp_hz=args.hp_hz)
     sender = EventSender(args.server, device_id=args.device_id,
                          heartbeat_interval=args.heartbeat,
                          device_token=args.device_token)

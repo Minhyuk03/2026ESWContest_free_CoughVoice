@@ -1,23 +1,45 @@
-/* 디자인 토큰 — Figma 와이어프레임 (기침 화자 식별 시스템) */
+/* 디자인 토큰 — 기침 화자 식별 시스템 대시보드
+ *
+ * 색을 쓰는 규칙 (화면마다 다르게 쓰지 말 것):
+ *   accent  선택·링크·차트 등 "조작할 수 있는 것"과 데이터 표현에만 쓴다.
+ *   ok      정상·온라인·조치 완료.
+ *   warn    확인이 필요한 상태(중요 알림·검토 필요·미확인).
+ *   danger  즉시 대응이 필요한 상태(긴급 알림·오프라인·삭제).
+ * 회색은 상태가 아니라 '보조 정보'에만 쓴다. 정상과 경고가 모두 회색이면
+ * 훑어볼 때 무엇이 문제인지 구분되지 않는다.
+ */
 :root {
-  --bg: #fafafc;
-  --sidebar: #262933;
-  --sidebar-active: #4d5261;
-  --sidebar-text: #b2b8c7;
+  --bg: #f4f6f9;
   --card: #ffffff;
-  --chip: #ededf2;
-  --line: #e4e4ea;
-  --row-alt: #f4f4f8; /* 표·목록 교차 줄 배경 */
-  --text: #262933;
-  --muted: #737885;
-  --danger-bg: #fae5e5;
-  --danger: #bf2626;
-  --bar: #d9d9e0;
-  --ok: #2f9e5f;
-  /* 알림 심각도 — 질환 중증도가 아니라 "얼마나 급히 확인할 일인가"다 */
-  --warn: #a86400;
-  --warn-bg: #fdf1dc;
+  --text: #1b1f2a;
+  --muted: #596070;          /* 흰 배경에서 대비 6:1 이상 — 설명문도 읽히게 */
+  --line: #e1e4ec;
+  --row-alt: #f7f8fc;
+  --chip: #eceff5;
 
+  --sidebar: #1e2430;
+  --sidebar-text: #b9c1d2;
+  --sidebar-active: #0e7490;
+
+  /* 핵심 색 — 선택 메뉴·링크·차트에 공통으로 쓴다 */
+  --accent: #0e7490;
+  --accent-strong: #0a5566;
+  --accent-soft: #e1f1f5;
+
+  /* 상태 색 */
+  --ok: #0f766e;
+  --ok-bg: #e2f2ef;
+  --warn: #b45309;          /* 주의 — 확인해 두면 좋은 수준 */
+  --warn-bg: #fdf3e4;
+  --attn: #c2410c;          /* 중요 — 진료 시점을 검토할 수준. 주의와 색이 같으면
+                               세 단계로 나눈 의미가 없어진다 */
+  --attn-bg: #fff0e8;
+  --danger: #b42318;
+  --danger-bg: #fdebe9;
+
+  --bar: #cfd5e2;
+
+  --radius: 10px;
   --sans: 'Noto Sans KR', -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo',
     'Segoe UI', sans-serif;
 }
@@ -31,7 +53,8 @@ body {
   font-family: var(--sans);
   background: var(--bg);
   color: var(--text);
-  font-size: 14px;
+  font-size: 15px;
+  line-height: 1.55;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -39,14 +62,20 @@ body {
   min-height: 100svh;
 }
 
-h1, h2, h3, p {
+h1, h2, h3, h4, p {
   margin: 0;
 }
 
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+a:hover { text-decoration: underline; }
+
 button {
   font-family: inherit;
-  font-size: 13px;
-  border: none;
+  font-size: 14px;
+  border: 1px solid transparent;
   border-radius: 8px;
   cursor: pointer;
   background: var(--chip);
@@ -54,19 +83,23 @@ button {
   padding: 8px 14px;
 }
 
+button:hover:not(:disabled) { background: #e2e6ef; }
+button:disabled { opacity: 0.45; cursor: default; }
+
 button.primary {
-  background: var(--sidebar);
+  background: var(--accent);
   color: #fff;
 }
+button.primary:hover:not(:disabled) { background: var(--accent-strong); }
 
 button.danger {
   background: var(--danger-bg);
   color: var(--danger);
 }
 
-input, select {
+input, select, textarea {
   font-family: inherit;
-  font-size: 13px;
+  font-size: 14px;
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 8px 12px;
@@ -74,7 +107,16 @@ input, select {
   color: var(--text);
 }
 
-input:focus, select:focus, button:focus-visible {
-  outline: 2px solid var(--sidebar-active);
+textarea { width: 100%; resize: vertical; }
+
+input:focus, select:focus, textarea:focus, button:focus-visible, a:focus-visible {
+  outline: 2px solid var(--accent);
   outline-offset: 1px;
+}
+
+input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  padding: 0;
 }

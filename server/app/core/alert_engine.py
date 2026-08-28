@@ -2,7 +2,7 @@
 
 규칙은 두 갈래다.
 
-**관찰 규칙** (KIND_COUNT·KIND_NIGHT·KIND_UNKNOWN)
+**관찰 규칙** (KIND_COUNT·KIND_NIGHT)
     사용자가 직접 정한 절대 횟수 기준. 근거는 사용자의 관심사이지 임상 지침이 아니다.
     참고자료가 분명히 한 대로, 기침 횟수로 질환을 가르는 규칙은 성립하지 않는다
     (질환별 분포가 크게 겹친다 — core/guidance.py). 그래서 이 갈래의 알림은
@@ -72,6 +72,12 @@ class AlertEngine:
 
     def _run(self, db: Session, person_id: Optional[int],
              person: Optional[Person], check) -> List[Alert]:
+        # 미등록(person_id=None) 묶음은 알림 대상이 아니다. 그것은 한 사람이 아니라
+        # "이름을 붙이지 못한 기침들"의 잡동사니라, "미등록 화자 · 최근 24시간 14회"
+        # 같은 문장은 있지도 않은 사람의 상태를 보고하는 셈이 된다(2026-08-27 실제 발생).
+        # 집계·통계에서는 계속 세지만 알림은 울리지 않는다.
+        if person_id is None:
+            return []
         rules = db.scalars(select(AlertRule).where(AlertRule.enabled.is_(True))).all()
         fired: List[Alert] = []
         for rule in rules:
@@ -112,11 +118,11 @@ class AlertEngine:
         if rule.kind == AlertRule.KIND_URGENT:
             return None                      # 증상 입력 경로에서만 평가한다
 
-        if rule.kind == AlertRule.KIND_UNKNOWN:
-            if event.person_id is not None:
-                return None
-            return ("등록되지 않은 화자의 기침이 감지되었습니다. 확인이 필요합니다.",
-                    guidance.SEV_INFO, "사용자 지정 관찰 기준")
+        # KIND_UNKNOWN("미등록 감지")은 2026-08-28에 폐기했다. person_id가 비었다는 것은
+        # "등록되지 않은 사람이 기침했다"가 아니라 "등록본 어느 쪽과도 임계치만큼
+        # 닮지 않았다"일 뿐이다. 실제로 미등록자 40건 중 35건(87.5%)은 임계치를 넘어
+        # 등록자 이름을 달았다 — 진짜 외부인일수록 이 규칙에 걸리지 않는다.
+        # 낡은 DB에 규칙 행이 남아 있어도 여기서 걸러져 발동하지 않는다.
 
         if rule.kind == AlertRule.KIND_DURATION:
             return self._check_duration(db, rule, event, who)
@@ -221,6 +227,47 @@ class AlertEngine:
                 + ". 기침 횟수와 관계없이 지금 진료를 받으세요.",
                 guidance.SEV_URGENT,
                 "CDC 호흡기 응급징후 · NHS 객혈 안내")
+
+    # --------------------------------------------------------- 시험 실행
+    def dry_run(self, db: Session, rule: AlertRule) -> List[dict]:
+        """규칙을 **지금 시각 기준으로** 평가해 보고 결과만 돌려준다 (알림 생성 없음).
+
+        같은 판정 코드를 그대로 태워야 화면의 "시험 실행" 결과와 실제 동작이 어긋나지
+        않는다. 그래서 세션에 넣지 않은 임시 CoughEvent(현재 시각·해당 화자)를 만들어
+        평가 경로에 넘긴다 — DB에 추가하지 않으므로 기침 횟수에 섞이지 않는다.
+
+        쿨다운은 적용하지 않는다. 시험의 질문은 "지금 조건을 만족하는가"이지
+        "방금 울렸으니 참는가"가 아니다. 응답 note에 그 사실을 적어 보낸다.
+        """
+        now = datetime.now(timezone.utc)
+        persons = db.scalars(select(Person)).all()
+        # 미등록 묶음은 대상에서 뺀다 — _run이 어차피 울리지 않으므로, 시험 화면에
+        # 남겨두면 "울릴 것"이라고 잘못 안내하게 된다.
+        targets: List[tuple] = [(p.id, p) for p in persons]
+
+        out: List[dict] = []
+        for person_id, person in targets:
+            if not self._targets(rule, person):
+                continue
+            probe = CoughEvent(person_id=person_id, captured_at=utc_naive(now),
+                               device_id="(시험)", audio_path="")
+            if rule.kind == AlertRule.KIND_URGENT:
+                report = db.scalar(
+                    select(SymptomReport)
+                    .where(SymptomReport.person_id.is_(None) if person_id is None
+                           else SymptomReport.person_id == person_id)
+                    .order_by(SymptomReport.reported_at.desc()).limit(1))
+                verdict = self._check_symptom(rule, report) if report else None
+            else:
+                verdict = self._check_event(db, rule, probe, person)
+            out.append({
+                "person_id": person_id,
+                "label": (self._who(person) if person is not None else "미등록 화자"),
+                "would_fire": verdict is not None,
+                "message": verdict[0] if verdict else None,
+                "severity": verdict[1] if verdict else None,
+            })
+        return out
 
     # ------------------------------------------------------------------ 집계
     def _count_recent(self, db: Session, event: CoughEvent, window_minutes: int,
